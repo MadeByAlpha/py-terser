@@ -13,4 +13,5 @@ __all__ = (
     "printer",
     "resolver",
     "transforms",
+    "tree_shake",
 )

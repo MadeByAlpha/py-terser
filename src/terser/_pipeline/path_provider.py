@@ -161,13 +161,6 @@ class PathProvider(MutableSet[str]):
         """Resolved absolute directory roots that were walked to build the specs."""
         return self.__roots
 
-    def root_for(self, module: spec.ModuleSpec) -> Path | None:
-        """The directory root a module's file was found under, if any."""
-        for root in self.__roots:
-            if module.path.is_relative_to(root):
-                return root
-        return None
-
     @property
     def is_resolved(self) -> bool:
         return not len(self.__queue) and not len(self.__discarded)

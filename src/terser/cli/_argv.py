@@ -68,6 +68,13 @@ class ManglingOptions(BaseModel):
     """Comma-separated list of global names that will not be mangled. Prefix with a
     glob pattern and ':' to scope to matching modules, e.g. 'foo.bar:baz,qux'"""
 
+    rename_modules: bool = False
+    """Mangle module/package file and directory names (requires --output, since renamed files
+    can't be written back in-place)"""
+
+    preserve_modules: Annotated[set[str], Field(default_factory=set)]
+    """Glob patterns matched against a module's dotted path - matching modules keep their name"""
+
 
 class TerserArguments(BaseModel):
     model_config = _config
@@ -91,6 +98,11 @@ class TerserArguments(BaseModel):
     workers: int | None = None
     """Number of worker threads to process modules with in project mode. Defaults to the
     interpreter's default thread pool sizing."""
+
+    entry: Annotated[set[str], Field(default_factory=set)]
+    """Entry point modules (dotted module path or file path). Requires a directory, multiple
+    paths, or --in-place. If given, modules unreachable from these are dropped from the output
+    (tree-shaking), and these modules are never renamed by --rename-modules"""
 
 # TODO: Cleanup this shit
 class TerserParsedArguments(TerserArguments):
@@ -129,6 +141,8 @@ class TerserParsedArguments(TerserArguments):
             preserve_locals=namespace.preserve_locals,
             rename_globals=namespace.rename_globals,
             preserve_globals=namespace.preserve_globals,
+            rename_modules=namespace.rename_modules,
+            preserve_modules=namespace.preserve_modules,
         )
 
         return cls(
@@ -139,4 +153,5 @@ class TerserParsedArguments(TerserArguments):
             transform_options=transform_options,
             mangling_options=mangling_options,
             workers=namespace.workers,
+            entry=namespace.entry,
         )

@@ -91,6 +91,9 @@ def main():
         preserve_locals=parse_preserve(args.mangling_options.preserve_locals),
         rename_globals=args.mangling_options.rename_globals,
         preserve_globals=parse_preserve(args.mangling_options.preserve_globals),
+        rename_modules=args.mangling_options.rename_modules,
+        preserve_modules=args.mangling_options.preserve_modules,
+        entry=args.entry,
     ))
     return
 
@@ -127,5 +130,14 @@ def _argv() -> TerserParsedArguments:
     #if not is_project_mode(args) and (args.mangling_options.rename_globals or args.mangling_options.preserve_globals):
     #    sys.stderr.write('error: --rename-globals/--preserve-globals require a directory, multiple paths, or --in-place, since global renaming needs whole-project linking\n')
     #    sys.exit(1)
+    if (
+        len(args.path) <= 1 and (not args.path or os.path.isfile(next(iter(args.path))))
+        and (args.entry or args.mangling_options.rename_modules or args.mangling_options.preserve_modules)
+    ):
+        sys.stderr.write('error: --entry/--rename-modules/--preserve-modules require a directory or multiple paths, since these need whole-project linking\n')
+        sys.exit(1)
+    if args.mangling_options.rename_modules and not args.output_options.output:
+        sys.stderr.write('error: --rename-modules requires --output, since renamed files can\'t be written back in-place\n')
+        sys.exit(1)
 
     return args
