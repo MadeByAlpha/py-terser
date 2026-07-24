@@ -138,6 +138,7 @@ class ProjectMinifier(Pipeline):
             del tg
 
             modules, project = await self.__minify_modules()
+            full_project = project
 
             for module in self.__reporter("Linking", modules):
                 linker.link(module, project)
@@ -175,7 +176,7 @@ class ProjectMinifier(Pipeline):
 
                     modules[i] = transform(cache)(modules[i])
 
-            await self.__dump_results(modules, new_dotted)
+            await self.__dump_results(modules, full_project, project, new_dotted)
 
     async def __minify_modules(self, /) -> tuple[list[ast.Module], dict[str, ModuleRef]]:
         def __run(task: Task, source: str, spec: ModuleSpec, /):
@@ -229,7 +230,37 @@ class ProjectMinifier(Pipeline):
 
         return resolved
 
-    async def __dump_results(self, modules: list[ast.Module], new_dotted: dict[str, str], /):
+    def __ffi_companion_dotted(self, ffi_path: Path, /) -> str | None:
+        """
+        The dotted module path this FFI file sits beside, if any.
+
+        Native extensions are conventionally named after the module they belong to (optionally
+        with an ABI tag before the suffix, e.g. ``foo.cpython-314-x86_64-linux-gnu.so`` or a bare
+        ``foo.so``) - matching on the part before the first dot recovers that module name so the
+        FFI file can be renamed/dropped in lockstep with its Python sibling.
+        """
+
+        root = None
+        for r in self.__pp.roots:
+            if ffi_path.is_relative_to(r):
+                root = r
+                break
+
+        if root is None:
+            return None
+
+        stem = ffi_path.name.split('.', 1)[0]
+        parts = ffi_path.parent.relative_to(root).parts
+        return '.'.join((*parts, stem)) if parts else stem
+
+    async def __dump_results(
+        self,
+        modules: list[ast.Module],
+        full_project: dict[str, ModuleRef],
+        project: dict[str, ModuleRef],
+        new_dotted: dict[str, str],
+        /,
+    ):
         async def module(node: ast.Module, /):
             spec = ref(node).spec
 
@@ -244,15 +275,30 @@ class ProjectMinifier(Pipeline):
             await _write_async(dest, source, limiter=self.__limiter)
 
         async def binary(path: Path, /):
-            assert self.__output
+            if self.__output is None:
+                # in-place: the FFI file is already where it should be
+                return
 
-            root = None
-            for r in self.__pp.roots:
-                if path.is_relative_to(r):
-                    root = r
-                    break
+            companion = self.__ffi_companion_dotted(path)
 
-            dest = self.__output / (path.relative_to(root) if root else path.name)
+            if companion is not None and companion in full_project and companion not in project:
+                # sibling module was tree-shaken away - the FFI file has no reachable consumer left
+                return
+
+            if companion is not None and companion in new_dotted:
+                new_leaf = new_dotted[companion].rsplit('.', 1)[-1]
+                _, _, tag = path.name.partition('.')
+                new_name = f"{new_leaf}.{tag}" if tag else new_leaf
+                dest = self.__output.joinpath(*new_dotted[companion].split('.')[:-1], new_name)
+            else:
+                root = None
+                for r in self.__pp.roots:
+                    if path.is_relative_to(r):
+                        root = r
+                        break
+
+                dest = self.__output / (path.relative_to(root) if root else path.name)
+
             await dest.parent.mkdir(parents=True, exist_ok=True)
             await to_thread.run_sync(shutil.copy2, str(path), str(dest))
 
