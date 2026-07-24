@@ -206,7 +206,16 @@ class NameAssigner:
 
         """
 
-        return all(name not in ref(namespace).assigned_names for namespace in reservation_scope)
+        def unreserved(namespace):
+            namespace_ref = ref(namespace)
+            if not hasattr(namespace_ref, 'assigned_names'):
+                # namespace is no longer reachable from the module root (a transform
+                # deleted the subtree it belonged to) - nothing reserves anything there
+                return True
+
+            return name not in namespace_ref.assigned_names
+
+        return all(unreserved(namespace) for namespace in reservation_scope)
 
     def assign(self, namespace, binding, *, prefix=''):
         """

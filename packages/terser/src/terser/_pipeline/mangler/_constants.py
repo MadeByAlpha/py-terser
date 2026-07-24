@@ -66,15 +66,28 @@ class HoistedBinding(Binding):
 
     def rename(self, new_name):
 
-        for node in self.references:
-            replace(node, ast.Name(id=new_name, ctx=ast.Load()))
+        # snapshot first - add_reference (below) appends to this same list, and we
+        # only want to replace the references that existed going into this rename
+        old_references = list(self.references)
 
-        self._local_namespace.body = list(
-            insert(
-                self._local_namespace.body,
-                ast.Assign(targets=[ast.Name(id=new_name, ctx=ast.Store())], value=self._value_node),
-            )
-        )
+        for node in old_references:
+            new_node = ast.Name(id=new_name, ctx=ast.Load())
+            replace(node, new_node)
+            self.add_reference(new_node)
+
+        # self._value_node was one of the just-replaced references (the first occurrence
+        # found) - it's an existing, already-registered node, just moving to a new parent
+        target = ast.Name(id=new_name, ctx=ast.Store())
+        new_stmt = ast.Assign(targets=[target], value=self._value_node)
+
+        NodeRef.new(new_stmt, self._local_namespace)
+        ref(new_stmt).namespace = self._local_namespace
+        NodeRef.new(target, new_stmt)
+        ref(target).namespace = self._local_namespace
+        ref(self._value_node).parent = new_stmt
+        self.add_reference(target)
+
+        self._local_namespace.body = list(insert(self._local_namespace.body, new_stmt))
 
         self._name = new_name
 
