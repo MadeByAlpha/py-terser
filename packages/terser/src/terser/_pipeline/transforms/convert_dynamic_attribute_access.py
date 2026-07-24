@@ -19,7 +19,12 @@ def _is_unshadowed_builtin(node: ast.expr, name: str) -> bool:
     if not isinstance(node, ast.Name):
         return False
 
-    binding = ref(node).binding
+    try:
+        binding = ref(node).binding
+    except AttributeError:
+        # some mangler-synthesized nodes are never fully registered with a binding
+        return False
+
     return isinstance(binding, BuiltinBinding) and binding.name == name and not binding.is_redefined()
 
 

@@ -5,6 +5,13 @@ from terser.config import TransformConfig
 from ._suite import SuiteTransformer, TransformerFlag
 
 
+def _binding_of(node):
+    try:
+        return ref(node).binding
+    except AttributeError:
+        return None
+
+
 class RemoveDummyAssignments(SuiteTransformer):
     """
     Remove self-assignments like `x = x`
@@ -33,4 +40,8 @@ class RemoveDummyAssignments(SuiteTransformer):
         if not isinstance(target, ast.Name) or not isinstance(value, ast.Name):
             return False
 
-        return ref(target).binding is ref(value).binding
+        target_binding = _binding_of(target)
+        # some mangler-synthesized nodes are never fully registered with a NodeRef/binding
+        # (e.g. an aliasing assignment for a keyword-callable renamed parameter) - if we
+        # can't resolve both sides, we can't prove this is a genuine dummy assignment
+        return target_binding is not None and target_binding is _binding_of(value)

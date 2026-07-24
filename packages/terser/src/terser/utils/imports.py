@@ -20,7 +20,14 @@ def qualified_name(node: ast.expr, /) -> str | None:
     if not isinstance(node, ast.Name):
         return None
 
-    binding = ref(node).binding
+    # some mangler-synthesized nodes are never fully registered with a NodeRef/binding
+    # (e.g. an aliasing assignment for a keyword-callable renamed parameter) - treat
+    # those as unresolvable rather than crashing
+    try:
+        binding = ref(node).binding
+    except AttributeError:
+        return None
+
     if not isinstance(binding, ImportBinding) or not binding.name:
         return None
 
