@@ -27,26 +27,31 @@ class CombineImports(SuiteTransformer):
 
     def _combine_import(self, node_list, parent):
 
-        alias = []
-        namespace = None
+        pending = []
+
+        def flush():
+            if len(pending) > 1:
+                alias = [a for stmt in pending for a in stmt.names]
+                yield self.add_child(ast.Import(names=alias), parent=parent, namespace=None)
+            elif pending:
+                # nothing to combine - yield the original statement unchanged, rather than
+                # needlessly reconstructing (and re-binding) an identical Import node
+                yield pending[0]
 
         for statement in node_list:
             if isinstance(statement, ast.Import):
-                alias += statement.names
+                pending.append(statement)
             else:
-                if alias:
-                    yield self.add_child(ast.Import(names=alias), parent=parent, namespace=namespace)
-                    alias = []
+                yield from flush()
+                pending = []
 
                 yield statement
 
-        if alias:
-            yield self.add_child(ast.Import(names=alias), parent=parent, namespace=namespace)
+        yield from flush()
 
     def _combine_import_from(self, node_list, parent):
 
-        prev_import = None
-        alias = []
+        pending: list[ast.ImportFrom] = []
 
         def combine(statement):
             if not isinstance(statement, ast.ImportFrom):
@@ -55,28 +60,29 @@ class CombineImports(SuiteTransformer):
             if len(statement.names) == 1 and statement.names[0].name == '*':
                 return False
 
-            if prev_import is None:
+            if not pending:
                 return True
 
-            if statement.module == prev_import.module and statement.level == prev_import.level:
-                return True
+            return statement.module == pending[0].module and statement.level == pending[0].level
 
-            return False
+        def flush():
+            if len(pending) > 1:
+                alias = [a for stmt in pending for a in stmt.names]
+                yield self.add_child(
+                    ast.ImportFrom(module=pending[0].module, names=alias, level=pending[0].level), parent=parent, namespace=ref(pending[0]).namespace
+                )
+            elif pending:
+                # nothing to combine - yield the original statement unchanged, rather than
+                # needlessly reconstructing (and re-binding) an identical ImportFrom node
+                yield pending[0]
 
         for statement in node_list:
             if combine(statement):
-                prev_import = statement
-                alias += statement.names
+                pending.append(statement)
             else:
-                if alias:
-                    yield self.add_child(
-                        ast.ImportFrom(module=prev_import.module, names=alias, level=prev_import.level), parent=parent, namespace=ref(prev_import).namespace
-                    )
-                    alias = []
+                yield from flush()
+                pending = []
 
                 yield statement
 
-        if alias:
-            yield self.add_child(
-                ast.ImportFrom(module=prev_import.module, names=alias, level=prev_import.level), parent=parent, namespace=ref(prev_import).namespace
-            )
+        yield from flush()

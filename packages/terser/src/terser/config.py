@@ -22,6 +22,14 @@ class RemoveAnnotationOptions:
     """Remove class attribute annotations"""
 
 
+@dataclass()
+class RemoveDocstringOptions:
+    """Options that affect how docstrings are removed"""
+
+    also_modules: bool = False
+    """Also remove module-level docstrings"""
+
+
 # TODO: frozen=True
 @dataclass()
 class TransformConfig:
@@ -68,13 +76,64 @@ class TransformConfig:
     convert_pass: bool = True
     """Remove or convert `pass` statements to the smallest literal statement, like `0`"""
 
+    unfold_iife_lambdas: bool = True
+    """Inline immediately-invoked no-arg lambda calls, e.g. `(lambda: x)()` -> `x`"""
+
+    remove_type_statements: bool = True
+    """Remove `type X = ...` alias statements"""
+
+    convert_early_exits: bool = True
+    """Merge `if cond: return a` followed by `return b` into `return a if cond else b`"""
+
+    convert_to_inline: bool = True
+    """Convert `if cond: func(x)` to `cond and func(x)`, and if/else statements to a conditional expression"""
+
+    convert_to_lambda: bool = True
+    """Convert single-expression functions to a lambda assignment"""
+
     ### requires binding
+    remove_dummy_assignments: bool = True
+    """Remove self-assignments like `x = x`"""
+
+    remove_docstrings: bool | RemoveDocstringOptions = False
+    """Options that affect how docstrings are removed"""
+
+    respect_all: bool = False
+    """When cleaning up unused imports, also remove unused module-level imports not listed in `__all__`"""
+
+    cleanup_local_imports: bool = True
+    """Remove unused local imports, and unused global imports if `respect_all`"""
+
+    remove_typing_decorators: bool = True
+    """Remove `@typing.override`/`@typing.final` decorators"""
+
+    remove_overloads: bool = True
+    """Remove `@typing.overload`-decorated stub definitions. Always on when `remove_typing_decorators` is set"""
+
+    remove_generics: bool = True
+    """Remove bare (non-parametrized) `Generic` base classes"""
+
+    remove_typing_classes: bool = True
+    """Remove bare `Protocol` base classes (unless `@typing.runtime_checkable`)"""
+
+    convert_typing_constructors: bool = True
+    """Convert simple `NamedTuple`/`TypedDict` class definitions to `namedtuple`/`dict` constructors"""
+
+    convert_typing_extensions: bool = True
+    """Convert `typing_extensions` imports to `typing` where the symbol is stable there"""
+
+    convert_dynamic_attribute_access: bool = True
+    """Convert `getattr`/`setattr` calls with a constant, valid identifier name to attribute access"""
+
     remove_empty_exc_brackets: bool = True
     """Remove brackets with empty arguments from built-in exception raise statements"""
 
     ### mangle-sensitive transforms
     convert_posargs: bool = True
     """Convert positional-only arguments to normal arguments"""
+
+    remove_dunder_all: bool = True
+    """Remove the top-level `__all__` assignment"""
 
 
 # TODO: frozen=True

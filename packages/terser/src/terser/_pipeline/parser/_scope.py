@@ -84,7 +84,7 @@ class ScopeResolver:
 
         for arg in (typed[list[ast.arg]].getattr(node, "posonlyargs", []) + node.args):
             self.__resolve(arg, namespace=fn)
-            if hasattr(arg, "ref") and arg.annotation is not None:
+            if arg.annotation is not None:
                 self.__resolve(arg.annotation, namespace=namespace)
 
         if hasattr(node, "kwonlyargs"):

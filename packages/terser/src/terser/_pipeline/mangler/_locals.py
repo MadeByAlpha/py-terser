@@ -99,7 +99,14 @@ def reserve_name(name, reservation_scope):
     """
 
     for namespace in reservation_scope:
-        ref(namespace).assigned_names.add(name)
+        namespace_ref = ref(namespace)
+        if not hasattr(namespace_ref, 'assigned_names'):
+            # namespace is no longer reachable from the module root (a transform deleted
+            # the subtree it belonged to) - nothing will ever rename anything in it, so
+            # there's nothing to reserve
+            continue
+
+        namespace_ref.assigned_names.add(name)
 
 
 def should_rename(binding, name, scope, is_available):

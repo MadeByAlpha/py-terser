@@ -56,8 +56,19 @@ class RemoveLiteralStatements(SuiteTransformer):
 
         return is_constant_node(node.value, (ast.Num, ast.Str, ast.NameConstant, ast.Bytes))
 
+    def _is_docstring_position(self, node_list, index, parent):
+        # leave docstrings alone here - RemoveDocstrings decides whether to remove them
+        if index != 0 or not isinstance(parent, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            return False
+
+        node = node_list[0]
+        return isinstance(node, ast.Expr) and is_constant_node(node.value, ast.Str)
+
     def suite(self, node_list, parent):
-        without_literals = [self.visit(n) for n in node_list if not self.is_literal_statement(n)]
+        without_literals = [
+            self.visit(n) for i, n in enumerate(node_list)
+            if self._is_docstring_position(node_list, i, parent) or not self.is_literal_statement(n)
+        ]
 
         if len(without_literals) == 0:
             if isinstance(parent, ast.Module):

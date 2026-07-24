@@ -5,13 +5,26 @@ from typing import TYPE_CHECKING, override
 
 from terser.ast import ast, compare_ast, is_constant_node, ref
 from terser.ast.ref import ref_or_none
+from terser.utils.imports import qualified_name
 
+from ..resolver.binding import BuiltinBinding
 from ..printer.expression_printer import ExpressionPrinter
 from ..resolver import forget
-from ._suite import SuiteTransformer
+from ._suite import SuiteTransformer, TransformerFlag
 
 if __debug__ and TYPE_CHECKING:
     from ...config import TransformConfig
+
+
+def _is_unshadowed_builtin(node, name: str) -> bool:
+    if not isinstance(node, ast.Name):
+        return False
+
+    binding = ref(node).binding
+    return isinstance(binding, BuiltinBinding) and binding.name == name and not binding.is_redefined()
+
+
+_CONVERSION_FUNCS = {-1: 'str', 115: 'str', 114: 'repr', 97: 'ascii'}
 
 
 def is_foldable_constant(node):
@@ -38,7 +51,7 @@ class FoldConstants(SuiteTransformer):
     """
     Fold Constants if it would reduce the size of the source
     """
-    FLAGS = 0
+    FLAGS = TransformerFlag.REQUIRES_IMPORT_RESOLVE
 
     @override
     @classmethod
@@ -183,6 +196,103 @@ class FoldConstants(SuiteTransformer):
         forget([node.test, dropped])
         _reparent(value, node)
         return value
+
+    def visit_Compare(self, node):
+        node.left = self.visit(node.left)
+        node.comparators = [self.visit(c) for c in node.comparators]
+
+        if len(node.ops) != 1 or not isinstance(node.ops[0], (ast.Eq, ast.NotEq, ast.Is, ast.IsNot)):
+            return node
+
+        left, right = node.left, node.comparators[0]
+        left_bool = is_constant_node(left, ast.NameConstant) and isinstance(left.value, bool)
+        right_bool = is_constant_node(right, ast.NameConstant) and isinstance(right.value, bool)
+
+        if left_bool == right_bool:
+            # exactly one side must be a bool literal - both or neither isn't this pattern
+            return node
+
+        bool_value, other = (left.value, right) if left_bool else (right.value, left)
+        negate = bool_value == isinstance(node.ops[0], (ast.NotEq, ast.IsNot))
+
+        new_node = ast.UnaryOp(op=ast.Not(), operand=other) if negate else other
+        node_ref = ref(node)
+        return self.add_child(new_node, node_ref.parent, node_ref.namespace)
+
+    def visit_Name(self, node):
+        if node.id != '__debug__' or not _is_unshadowed_builtin(node, '__debug__'):
+            return node
+
+        new_node = ast.NameConstant(value=self._config.optimize < 1)
+        node_ref = ref(node)
+        return self.add_child(new_node, node_ref.parent, node_ref.namespace)
+
+    def visit_Attribute(self, node):
+        node.value = self.visit(node.value)
+
+        if qualified_name(node) != 'typing.TYPE_CHECKING':
+            return node
+
+        new_node = ast.NameConstant(value=False)
+        node_ref = ref(node)
+        return self.add_child(new_node, node_ref.parent, node_ref.namespace)
+
+    def visit_JoinedStr(self, node):
+        node.values = [self.visit(v) for v in node.values]
+
+        if any(isinstance(v, ast.FormattedValue) and v.format_spec is not None for v in node.values):
+            return node
+
+        terms = []
+        for v in node.values:
+            if isinstance(v, ast.Constant):
+                terms.append(v)
+                continue
+
+            func_name = _CONVERSION_FUNCS.get(v.conversion, None)
+            if func_name is None:
+                return node
+
+            terms.append(ast.Call(func=ast.Name(id=func_name, ctx=ast.Load()), args=[v.value], keywords=[]))
+
+        if not terms:
+            new_node = ast.Constant(value='')
+        elif len(terms) == 1 and isinstance(terms[0], ast.Call):
+            new_node = terms[0]
+        else:
+            new_node = terms[0]
+            for term in terms[1:]:
+                new_node = ast.BinOp(left=new_node, op=ast.Add(), right=term)
+
+        node_ref = ref(node)
+        return self.add_child(new_node, node_ref.parent, node_ref.namespace)
+
+    def visit_Call(self, node):
+        node.func = self.visit(node.func)
+        node.args = [self.visit(a) for a in node.args]
+        node.keywords = [self.visit(k) for k in node.keywords]
+
+        if node.keywords:
+            return node
+
+        new_node = None
+        if not node.args and _is_unshadowed_builtin(node.func, 'list'):
+            new_node = ast.List(elts=[], ctx=ast.Load())
+        elif not node.args and _is_unshadowed_builtin(node.func, 'dict'):
+            new_node = ast.Dict(keys=[], values=[])
+        elif not node.args and _is_unshadowed_builtin(node.func, 'tuple'):
+            new_node = ast.Tuple(elts=[], ctx=ast.Load())
+        elif (
+            len(node.args) == 1 and isinstance(node.args[0], (ast.List, ast.Tuple)) and node.args[0].elts
+            and _is_unshadowed_builtin(node.func, 'set')
+        ):
+            new_node = ast.Set(elts=node.args[0].elts)
+
+        if new_node is None:
+            return node
+
+        node_ref = ref(node)
+        return self.add_child(new_node, node_ref.parent, node_ref.namespace)
 
 
 def _reparent(node, replaced):
