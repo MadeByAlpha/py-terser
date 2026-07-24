@@ -24,9 +24,6 @@ def _is_unshadowed_builtin(node, name: str) -> bool:
     return isinstance(binding, BuiltinBinding) and binding.name == name and not binding.is_redefined()
 
 
-_CONVERSION_FUNCS = {-1: 'str', 115: 'str', 114: 'repr', 97: 'ascii'}
-
-
 def is_foldable_constant(node):
     """
     Check if a node is a constant expression that can participate in folding.
@@ -234,36 +231,6 @@ class FoldConstants(SuiteTransformer):
             return node
 
         new_node = ast.NameConstant(value=False)
-        node_ref = ref(node)
-        return self.add_child(new_node, node_ref.parent, node_ref.namespace)
-
-    def visit_JoinedStr(self, node):
-        node.values = [self.visit(v) for v in node.values]
-
-        if any(isinstance(v, ast.FormattedValue) and v.format_spec is not None for v in node.values):
-            return node
-
-        terms = []
-        for v in node.values:
-            if isinstance(v, ast.Constant):
-                terms.append(v)
-                continue
-
-            func_name = _CONVERSION_FUNCS.get(v.conversion, None)
-            if func_name is None:
-                return node
-
-            terms.append(ast.Call(func=ast.Name(id=func_name, ctx=ast.Load()), args=[v.value], keywords=[]))
-
-        if not terms:
-            new_node = ast.Constant(value='')
-        elif len(terms) == 1 and isinstance(terms[0], ast.Call):
-            new_node = terms[0]
-        else:
-            new_node = terms[0]
-            for term in terms[1:]:
-                new_node = ast.BinOp(left=new_node, op=ast.Add(), right=term)
-
         node_ref = ref(node)
         return self.add_child(new_node, node_ref.parent, node_ref.namespace)
 
