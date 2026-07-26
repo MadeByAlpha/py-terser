@@ -21,9 +21,10 @@ def _disallow(project: dict[str, ModuleRef], rename_globals: bool, preserved: di
 
 def _from_import_links(project: dict[str, ModuleRef]):
     """
-    (alias node, origin binding) pairs for `from x import y [as z]`, where `y` is a name bound
-    in `x` (rather than a submodule of `x`) - once `y` is renamed, the alias's imported name
-    must follow, independently of whatever local name `z`/`y` mangles to in the importer.
+    (alias node, local binding, origin binding) triples for `from x import y [as z]`, where `y`
+    is a name bound in `x` (rather than a submodule of `x`) - once `y` is renamed, the alias's
+    imported name must follow, independently of whatever local name `z`/`y` mangles to in the
+    importer.
     """
 
     links = []
@@ -37,7 +38,7 @@ def _from_import_links(project: dict[str, ModuleRef]):
 
                 origin = next((b for b in linked.target.bindings if b.name == linked.target_name), None)
                 if origin is not None:
-                    links.append((alias, origin))
+                    links.append((alias, binding, origin))
 
     # `from x import *` upgraded bindings have no single alias node to update - not tracked here
     return links
@@ -149,10 +150,9 @@ def mangle_globals(project: dict[str, ModuleRef], rename_globals: bool = False, 
     for namespace, binding in pairs:
         assigner.assign(namespace, binding)
 
-    for alias_node, origin in from_import_links:
+    for alias_node, local, origin in from_import_links:
         alias_node.name = origin.name
-        if alias_node.asname == alias_node.name:
-            alias_node.asname = None
+        alias_node.asname = local.name if local.name != alias_node.name else None
 
     for attribute_node, origin in attribute_links:
         attribute_node.attr = origin.name
