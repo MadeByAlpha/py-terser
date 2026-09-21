@@ -11,6 +11,7 @@ from ._minify import minify, unparse
 from ._pipeline import PathProvider, Pipeline, linker, mangler, transforms, tree_shake
 from ._pipeline.mangler.util import preserved_names
 from .ast import ref
+from .ast.ref import spec as _spec
 
 if TYPE_CHECKING:
     import ast
@@ -45,6 +46,15 @@ async def _write_async(path: Path, source: str, /, *, limiter: CapacityLimiter):
     finally:
         await source_io.aclose()
 
+def _module_output_path(spec: _spec.ModuleSpec, new_dotted: dict[str, str]) -> Path:
+    """The relative output path a module should be written to, reflecting its mangled name."""
+
+    parts = new_dotted.get(str(spec), str(spec)).split('.')
+    if isinstance(spec, _spec.PackageSpec):
+        return Path(*parts, "__init__.py")
+    return Path(*parts[:-1], parts[-1] + spec.path.suffix)
+
+
 class ProjectMinifier(Pipeline):
     def __init__(
         self,
@@ -73,6 +83,9 @@ class ProjectMinifier(Pipeline):
         self.__output = output
 
         self.__pp = path_provider
+        # FFI binaries have no source to parse - they only occupy a namespace slot, so keep them apart
+        self.__module_specs = [s for s in path_provider.iter() if not isinstance(s, _spec.FfiModuleSpec)]
+        self.__ffi_specs = [s for s in path_provider.iter() if isinstance(s, _spec.FfiModuleSpec)]
         self.__reporter = reporter
         self.__limiter = CapacityLimiter(total_tokens=workers or int(
                 (getattr(os, "process_cpu_count", os.cpu_count)() or 1) * 1.6
@@ -114,7 +127,7 @@ class ProjectMinifier(Pipeline):
     async def __call__(self, /):
         with self.__reporter.prepare("Calculating task graph"):
             from terser.utils.cli_helper import TqdmDebugTaskGraph
-            m, f = len(self.__pp), len(self.__pp.ffi_files)
+            m, f = len(self.__module_specs), len(self.__ffi_specs)
 
             tg = TqdmDebugTaskGraph(
                 TqdmDebugTaskGraph.Task(m,
@@ -138,7 +151,6 @@ class ProjectMinifier(Pipeline):
             del tg
 
             modules, project = await self.__minify_modules()
-            full_project = project
 
             for module in self.__reporter("Linking", modules):
                 linker.link(module, project)
@@ -176,7 +188,7 @@ class ProjectMinifier(Pipeline):
 
                     modules[i] = transform(cache)(modules[i])
 
-            await self.__dump_results(modules, full_project, project, new_dotted)
+            await self.__dump_results(modules, project, new_dotted)
 
     async def __minify_modules(self, /) -> tuple[list[ast.Module], dict[str, ModuleRef]]:
         def __run(task: Task, source: str, spec: ModuleSpec, /):
@@ -189,7 +201,7 @@ class ProjectMinifier(Pipeline):
                 preserved_names=local,
             )
 
-        modules: list = [None] * len(self.__pp)
+        modules: list = [None] * len(self.__module_specs)
         async def __worker(i: int, task: Task, spec: ModuleSpec, /):
             source = await _read_async(spec.path, limiter=self.__limiter)
             module, _ = await to_thread.run_sync(__run, task, source, spec, limiter=self.__limiter)
@@ -198,8 +210,8 @@ class ProjectMinifier(Pipeline):
 
         async with anyio.create_task_group() as tg:
             # TODO: Cleanup this shit
-            j = len(self.__pp) - 1
-            for i, (task, spec) in enumerate(self.__reporter.iter(self.__pp.iter(), "Compiling modules")):
+            j = len(self.__module_specs) - 1
+            for i, (task, spec) in enumerate(self.__reporter.iter(self.__module_specs, "Compiling modules")):
                 # noinspection async-call
                 t = tg.start_soon(__worker, i, task, spec)
 
@@ -230,33 +242,9 @@ class ProjectMinifier(Pipeline):
 
         return resolved
 
-    def __ffi_companion_dotted(self, ffi_path: Path, /) -> str | None:
-        """
-        The dotted module path this FFI file sits beside, if any.
-
-        Native extensions are conventionally named after the module they belong to (optionally
-        with an ABI tag before the suffix, e.g. ``foo.cpython-314-x86_64-linux-gnu.so`` or a bare
-        ``foo.so``) - matching on the part before the first dot recovers that module name so the
-        FFI file can be renamed/dropped in lockstep with its Python sibling.
-        """
-
-        root = None
-        for r in self.__pp.roots:
-            if ffi_path.is_relative_to(r):
-                root = r
-                break
-
-        if root is None:
-            return None
-
-        stem = ffi_path.name.split('.', 1)[0]
-        parts = ffi_path.parent.relative_to(root).parts
-        return '.'.join((*parts, stem)) if parts else stem
-
     async def __dump_results(
         self,
         modules: list[ast.Module],
-        full_project: dict[str, ModuleRef],
         project: dict[str, ModuleRef],
         new_dotted: dict[str, str],
         /,
@@ -268,39 +256,32 @@ class ProjectMinifier(Pipeline):
                 # in-place: write each module back to its own original file
                 dest = spec.path
             else:
-                dest = self.__output / mangler.module_output_path(spec, new_dotted)
+                dest = self.__output / _module_output_path(spec, new_dotted)
                 await dest.parent.mkdir(parents=True, exist_ok=True)
 
             source = await to_thread.run_sync(unparse, str(spec.path), None, node, self.prefer_single_line)
             await _write_async(dest, source, limiter=self.__limiter)
 
-        async def binary(path: Path, /):
+        async def binary(ffi_spec: _spec.FfiModuleSpec, /):
             if self.__output is None:
                 # in-place: the FFI file is already where it should be
                 return
 
-            companion = self.__ffi_companion_dotted(path)
+            parent, _, _ = str(ffi_spec).rpartition('.')
 
-            if companion is not None and companion in full_project and companion not in project:
-                # sibling module was tree-shaken away - the FFI file has no reachable consumer left
+            if parent and parent not in project:
+                # the containing package was tree-shaken away - no reachable consumer left
                 return
 
-            if companion is not None and companion in new_dotted:
-                new_leaf = new_dotted[companion].rsplit('.', 1)[-1]
-                _, _, tag = path.name.partition('.')
-                new_name = f"{new_leaf}.{tag}" if tag else new_leaf
-                dest = self.__output.joinpath(*new_dotted[companion].split('.')[:-1], new_name)
-            else:
-                root = None
-                for r in self.__pp.roots:
-                    if path.is_relative_to(r):
-                        root = r
-                        break
-
-                dest = self.__output / (path.relative_to(root) if root else path.name)
+            new_parent = new_dotted.get(parent, parent) if parent else None
+            dest = (
+                self.__output.joinpath(*new_parent.split('.'), ffi_spec.path.name)
+                if new_parent
+                else self.__output / ffi_spec.path.name
+            )
 
             await dest.parent.mkdir(parents=True, exist_ok=True)
-            await to_thread.run_sync(shutil.copy2, str(path), str(dest))
+            await to_thread.run_sync(shutil.copy2, str(ffi_spec.path), str(dest))
 
         def wrap[T](func: Callable[[T], Awaitable[None]]) -> Callable[[T], Callable[[Task], Awaitable[None]]]:
             def wrapper(t: T) -> Callable[[Task], Awaitable[None]]:
@@ -310,7 +291,7 @@ class ProjectMinifier(Pipeline):
                 return runner
             return wrapper
 
-        tasks = set(map(wrap(module), modules)) | set(map(wrap(binary), self.__pp.ffi_files))
+        tasks = set(map(wrap(module), modules)) | set(map(wrap(binary), self.__ffi_specs))
         async with anyio.create_task_group() as tg:
             j = len(tasks) - 1
             for i, (task, func) in enumerate(self.__reporter.iter(tasks, "Writing output")):

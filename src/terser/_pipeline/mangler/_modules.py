@@ -1,30 +1,16 @@
 import fnmatch
 from typing import TYPE_CHECKING
 
-from anyio import Path
-
 from terser.ast import ast, ref
-from terser.ast.ref import spec as _spec
 from .._module_graph import submodule_hops
 from ..resolver.binding import ImportBinding
 from .name_generator import name_filter
 
 if TYPE_CHECKING:
     from terser.ast import ModuleRef
-    type ModuleSpec = _spec.ModuleSpec
 
 
-def _insert_after(stmt: ast.AST, new_stmt: ast.AST):
-    """Insert `new_stmt` right after `stmt` in whichever statement list contains it."""
-
-    parent = ref(stmt).parent
-    for _, value in ast.iter_fields(parent):
-        if isinstance(value, list) and stmt in value:
-            value.insert(value.index(stmt) + 1, new_stmt)
-            return
-
-
-def _rename_dotted(dotted: str, new_dotted: dict[str, str]) -> str:
+def __rename_dotted(dotted: str, new_dotted: dict[str, str]) -> str:
     """Rename every renamed segment of a dotted path, walking cumulative old prefixes."""
 
     parts = dotted.split('.')
@@ -39,11 +25,11 @@ def _rename_dotted(dotted: str, new_dotted: dict[str, str]) -> str:
     return '.'.join(result)
 
 
-def _rename_import_alias(alias: ast.alias, new_dotted: dict[str, str]):
+def __rename_import_alias(alias: ast.alias, new_dotted: dict[str, str]):
     """Rename a plain `import x[.y[.z]] [as w]` alias's source text."""
 
     old_text = alias.name
-    new_text = _rename_dotted(old_text, new_dotted)
+    new_text = __rename_dotted(old_text, new_dotted)
     if new_text == old_text:
         return
 
@@ -55,16 +41,19 @@ def _rename_import_alias(alias: ast.alias, new_dotted: dict[str, str]):
         # `as a` here would instead bind the *leaf* module (`as` always targets the leaf on a
         # dotted import), which is a different object. Keep the statement bare (so it still
         # binds the new root under its own name) and re-point the old local name at it instead.
-        _insert_after(
-            ref(alias).parent,
-            ast.Assign(
-                targets=[ast.Name(id=old_root, ctx=ast.Store())],
-                value=ast.Name(id=new_root, ctx=ast.Load()),
-            ),
+        stmt = ref(alias).parent
+        new_stmt = ast.Assign(
+            targets=[ast.Name(id=old_root, ctx=ast.Store())],
+            value=ast.Name(id=new_root, ctx=ast.Load()),
         )
+        for _, value in ast.iter_fields(ref(stmt).parent):
+            if not (isinstance(value, list) and stmt in value):
+                continue
+            value.insert(value.index(stmt) + 1, new_stmt)
+            return
 
 
-def _rename_from_module(stmt: ast.ImportFrom, resolved_path: str | None, new_dotted: dict[str, str]):
+def __rename_from_module(stmt: ast.ImportFrom, resolved_path: str | None, new_dotted: dict[str, str]):
     """Rename the `x` part of `from x import y`, following relative dots as-is."""
 
     if stmt.module is None or resolved_path is None:
@@ -78,7 +67,7 @@ def _rename_from_module(stmt: ast.ImportFrom, resolved_path: str | None, new_dot
     stmt.module = '.'.join(new_path.split('.')[-count:])
 
 
-def _rename_submodule_alias(alias: ast.alias, submodule_path: str, new_dotted: dict[str, str]):
+def __rename_submodule_alias(alias: ast.alias, submodule_path: str, new_dotted: dict[str, str]):
     """Rename the `y` part of `from x import y` when `y` is itself a submodule of `x`."""
 
     new_path = new_dotted.get(submodule_path)
@@ -95,15 +84,6 @@ def _rename_submodule_alias(alias: ast.alias, submodule_path: str, new_dotted: d
     alias.name = new_leaf
 
 
-def module_output_path(spec: ModuleSpec, new_dotted: dict[str, str]) -> Path:
-    """The relative output path a module should be written to, reflecting its mangled name."""
-
-    parts = new_dotted.get(str(spec), str(spec)).split('.')
-    if isinstance(spec, _spec.PackageSpec):
-        return Path(*parts, "__init__.py")
-    return Path(*parts[:-1], parts[-1] + spec.path.suffix)
-
-
 def mangle_modules(
     project: dict[str, ModuleRef],
     rename_modules: bool,
@@ -118,7 +98,7 @@ def mangle_modules(
     module is rewritten so behavior is preserved. Must run after `linker.link`, so every
     `ImportBinding.target` is resolved.
 
-    Physically moving the renamed files is the caller's responsibility - see `module_output_path`.
+    Physically moving the renamed files is the caller's responsibility.
 
     :param project: Every module in the project, keyed by dotted module path
     :param rename_modules: If module/package names may be renamed
@@ -170,20 +150,20 @@ def mangle_modules(
             stmt = ref(node).parent
 
             if isinstance(stmt, ast.ImportFrom):
-                _rename_from_module(stmt, unresolved.path, new_dotted)
+                __rename_from_module(stmt, unresolved.path, new_dotted)
 
                 if (
                     unresolved.submodule_path is not None
                     and binding.target is not None
                     and str(binding.target.spec) == unresolved.submodule_path
                 ):
-                    _rename_submodule_alias(node, unresolved.submodule_path, new_dotted)
+                    __rename_submodule_alias(node, unresolved.submodule_path, new_dotted)
             else:
                 assert isinstance(stmt, ast.Import)
-                _rename_import_alias(node, new_dotted)
+                __rename_import_alias(node, new_dotted)
 
         for stmt, unresolved in module_ref.wildcard_targets.items():
-            _rename_from_module(stmt, unresolved.path, new_dotted)
+            __rename_from_module(stmt, unresolved.path, new_dotted)
 
         for binding in module_ref.bindings:
             if not isinstance(binding, ImportBinding) or binding.target is None or binding.target_name is not None:
