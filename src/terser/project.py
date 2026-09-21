@@ -8,7 +8,7 @@ from anyio import AsyncFile, CapacityLimiter, Path, to_thread
 from alpha93.progression import HeadlessReporter
 
 from ._minify import minify, unparse
-from ._pipeline import PathProvider, Pipeline, linker, mangler, transforms
+from ._pipeline import PathProvider, Pipeline, linker, mangler, transforms, tree_shake
 from ._pipeline.mangler.util import preserved_names
 from .ast import ref
 
@@ -61,8 +61,13 @@ class ProjectMinifier(Pipeline):
         preserve_globals: dict[str, list[str]] | None = None,
         hoist_literals: bool = True,
         prefer_single_line: bool = True,
+        rename_modules: bool = False,
+        preserve_modules: set[str] | None = None,
+        entry: set[str] | None = None,
     ):
         assert path_provider.is_resolved, "paths are not resolved yet"
+        assert not (rename_modules and output is None), \
+            "rename_modules requires a separate output directory - it would otherwise leave the renamed file's old copy behind"
 
         self.__config = config
         self.__output = output
@@ -79,6 +84,9 @@ class ProjectMinifier(Pipeline):
         self.preserve_globals = preserve_globals or {}
         self.hoist_literals = hoist_literals
         self.prefer_single_line = prefer_single_line
+        self.rename_modules = rename_modules
+        self.preserve_modules = preserve_modules or set()
+        self.entry = entry or set()
 
     @classmethod
     async def minify(
@@ -117,6 +125,8 @@ class ProjectMinifier(Pipeline):
                     TqdmDebugTaskGraph.Step(),
                 ),
                 TqdmDebugTaskGraph.IterableStep(m),
+                TqdmDebugTaskGraph.Step(),
+                TqdmDebugTaskGraph.Step(),
                 TqdmDebugTaskGraph.IterableStep(m * self.__config.passes),
                 TqdmDebugTaskGraph.IterableStep(m + 1),
                 TqdmDebugTaskGraph.Task(m + f),
@@ -128,9 +138,18 @@ class ProjectMinifier(Pipeline):
             del tg
 
             modules, project = await self.__minify_modules()
+            full_project = project
 
             for module in self.__reporter("Linking", modules):
                 linker.link(module, project)
+
+            with self.__reporter("Tree-shaking"):
+                entry = await self.__resolve_entry(project)
+                project = tree_shake.shake(project, entry)
+                modules = [module_ref.ast for module_ref in project.values()]
+
+            with self.__reporter("Mangling modules"):
+                new_dotted = mangler.mangle_modules(project, self.rename_modules, self.preserve_modules, entry)
 
             cache = transforms.TransformCache(self.__config)
             modules_len = len(modules)
@@ -157,7 +176,7 @@ class ProjectMinifier(Pipeline):
 
                     modules[i] = transform(cache)(modules[i])
 
-            await self.__dump_results(modules)
+            await self.__dump_results(modules, full_project, project, new_dotted)
 
     async def __minify_modules(self, /) -> tuple[list[ast.Module], dict[str, ModuleRef]]:
         def __run(task: Task, source: str, spec: ModuleSpec, /):
@@ -194,30 +213,92 @@ class ProjectMinifier(Pipeline):
         project: dict[str, ModuleRef] = {str(ref(x).spec): ref(x) for x in modules}
         return modules, project
 
-    async def __dump_results(self, modules: list[ast.Module], /):
+    async def __resolve_entry(self, project: dict[str, ModuleRef], /) -> set[str]:
+        """Resolve `self.entry` (dotted module paths or file paths) against `project`'s modules."""
+
+        resolved: set[str] = set()
+        for value in self.entry:
+            if value in project:
+                resolved.add(value)
+                continue
+
+            candidate = await Path(value).resolve()
+            for dotted, module_ref in project.items():
+                if module_ref.spec.path == candidate:
+                    resolved.add(dotted)
+                    break
+
+        return resolved
+
+    def __ffi_companion_dotted(self, ffi_path: Path, /) -> str | None:
+        """
+        The dotted module path this FFI file sits beside, if any.
+
+        Native extensions are conventionally named after the module they belong to (optionally
+        with an ABI tag before the suffix, e.g. ``foo.cpython-314-x86_64-linux-gnu.so`` or a bare
+        ``foo.so``) - matching on the part before the first dot recovers that module name so the
+        FFI file can be renamed/dropped in lockstep with its Python sibling.
+        """
+
+        root = None
+        for r in self.__pp.roots:
+            if ffi_path.is_relative_to(r):
+                root = r
+                break
+
+        if root is None:
+            return None
+
+        stem = ffi_path.name.split('.', 1)[0]
+        parts = ffi_path.parent.relative_to(root).parts
+        return '.'.join((*parts, stem)) if parts else stem
+
+    async def __dump_results(
+        self,
+        modules: list[ast.Module],
+        full_project: dict[str, ModuleRef],
+        project: dict[str, ModuleRef],
+        new_dotted: dict[str, str],
+        /,
+    ):
         async def module(node: ast.Module, /):
             spec = ref(node).spec
 
             if self.__output is None:
+                # in-place: write each module back to its own original file
                 dest = spec.path
             else:
-                dest = self.__output / str(spec).replace('.', Path.parser.sep)
-                dest = dest.with_suffix(spec.path.suffix)
+                dest = self.__output / mangler.module_output_path(spec, new_dotted)
                 await dest.parent.mkdir(parents=True, exist_ok=True)
 
             source = await to_thread.run_sync(unparse, str(spec.path), None, node, self.prefer_single_line)
             await _write_async(dest, source, limiter=self.__limiter)
 
         async def binary(path: Path, /):
-            assert self.__output
+            if self.__output is None:
+                # in-place: the FFI file is already where it should be
+                return
 
-            root = None
-            for r in self.__pp.roots:
-                if path.is_relative_to(r):
-                    root = r
-                    break
+            companion = self.__ffi_companion_dotted(path)
 
-            dest = self.__output / (path.relative_to(root) if root else path.name)
+            if companion is not None and companion in full_project and companion not in project:
+                # sibling module was tree-shaken away - the FFI file has no reachable consumer left
+                return
+
+            if companion is not None and companion in new_dotted:
+                new_leaf = new_dotted[companion].rsplit('.', 1)[-1]
+                _, _, tag = path.name.partition('.')
+                new_name = f"{new_leaf}.{tag}" if tag else new_leaf
+                dest = self.__output.joinpath(*new_dotted[companion].split('.')[:-1], new_name)
+            else:
+                root = None
+                for r in self.__pp.roots:
+                    if path.is_relative_to(r):
+                        root = r
+                        break
+
+                dest = self.__output / (path.relative_to(root) if root else path.name)
+
             await dest.parent.mkdir(parents=True, exist_ok=True)
             await to_thread.run_sync(shutil.copy2, str(path), str(dest))
 
