@@ -6,7 +6,7 @@ if TYPE_CHECKING:
     from terser.ast import ModuleRef
 
 
-def _ancestors(dotted: str):
+def __ancestors(dotted: str):
     while '.' in dotted:
         dotted = dotted.rsplit('.', 1)[0]
         yield dotted
@@ -40,7 +40,7 @@ def shake(project: dict[str, ModuleRef], entry: set[str]) -> dict[str, ModuleRef
             continue
         reachable.add(dotted)
 
-        queue.extend(ancestor for ancestor in _ancestors(dotted) if ancestor not in reachable)
+        queue.extend(ancestor for ancestor in __ancestors(dotted) if ancestor not in reachable)
         queue.extend(dep for dep in dependencies(project[dotted], project) if dep not in reachable)
 
     return {dotted: module_ref for dotted, module_ref in project.items() if dotted in reachable}

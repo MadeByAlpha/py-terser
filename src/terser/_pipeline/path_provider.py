@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from typing import Final
 
     type NestedDict[T] = dict[str, T | NestedDict[T]]
+    type _Unresolved = UnresolvedModule | UnresolvedFfiModule
 
 
 SUFFIXES = (".py", ".pyw",)
@@ -32,11 +33,37 @@ class UnresolvedModule(spec.ModuleSpec):
     def resolve(self, module: str) -> str:
         raise NotImplementedError
 
+@final
+class UnresolvedFfiModule(spec.ModuleSpec):
+    """
+    Like `UnresolvedModule`, but for a native-extension binary - its dotted name is taken from the
+    part of the filename before the first dot, since `.with_suffix("")` would only strip the
+    trailing suffix and misread an ABI tag's dots (e.g. `foo.cpython-314-x86_64-linux-gnu.so`) as
+    further namespace segments.
+    """
+
+    __path: Final[Path]
+
+    def __init__(self, root: _SourceRoot, path: Path):
+        stem = path.name.split('.', 1)[0]
+        parts = path.parent.relative_to(root.path).parts
+        super().__init__('.'.join((*parts, stem)) if parts else stem)
+        self.__path = path
+
+    @override
+    @property
+    def path(self):
+        return self.__path
+
+    @override
+    def resolve(self, module: str) -> str:
+        raise NotImplementedError
+
 class _SourceRoot:
     __resolver: Final[_SpecResolver]
     __path: Final[Path]
 
-    __unresolved: dict[str, UnresolvedModule]
+    __unresolved: dict[str, UnresolvedModule | UnresolvedFfiModule]
 
     @property
     def path(self):
@@ -54,24 +81,29 @@ class _SourceRoot:
         self.__unresolved[str(namespace)] = namespace
         return namespace
 
-    def align(self):
-        aligned: NestedDict[UnresolvedModule] = {}
-        resolved: dict[str, spec.PackageSpec | spec.SingleFileModuleSpec] = {}
+    def register_ffi(self, path: Path):
+        namespace = UnresolvedFfiModule(self, path)
+        self.__unresolved[str(namespace)] = namespace
+        return namespace
 
-        def walk(d: NestedDict[UnresolvedModule], ns: list[str]) -> NestedDict[UnresolvedModule]:
+    def align(self):
+        aligned: NestedDict[_Unresolved] = {}
+        resolved: dict[str, spec.PackageSpec | spec.SingleFileModuleSpec | spec.FfiModuleSpec] = {}
+
+        def walk(d: NestedDict[_Unresolved], ns: list[str]) -> NestedDict[_Unresolved]:
             if not len(ns):
                 return d
 
-            t: NestedDict[UnresolvedModule] | UnresolvedModule | None = d.get(c := ns.pop(0))
+            t: NestedDict[_Unresolved] | _Unresolved | None = d.get(c := ns.pop(0))
             if not t:
                 t = d[c] = {}
-            elif isinstance(t, UnresolvedModule):
+            elif not isinstance(t, dict):
                 raise RuntimeError("conflict")
 
-            t: NestedDict[UnresolvedModule]
+            t: NestedDict[_Unresolved]
             return walk(t, ns)
 
-        def resolve(t: NestedDict[UnresolvedModule], parent: spec.PackageSpec | None = None):
+        def resolve(t: NestedDict[_Unresolved], parent: spec.PackageSpec | None = None):
             current = None
             if unresolved := t.get("__init__"):
                 if isinstance(unresolved, dict):
@@ -89,6 +121,14 @@ class _SourceRoot:
 
                 if isinstance(v, dict):
                     resolve(v, current)
+                    continue
+
+                if isinstance(v, UnresolvedFfiModule):
+                    ffi = spec.FfiModuleSpec(str(v), v.path)
+                    if current:
+                        current.register(ffi)
+                    else:
+                        resolved[str(ffi)] = ffi
                     continue
 
                 v: UnresolvedModule
@@ -119,6 +159,11 @@ class _SpecResolver:
         self.__specs[str(namespace)] = namespace
         return namespace
 
+    def add_ffi(self, path: Path):
+        namespace = spec.FfiModuleSpec(path.name.split('.', 1)[0], path)
+        self.__specs[str(namespace)] = namespace
+        return namespace
+
     def __getitem__(self, source: Path):
         return self.__sources[str(source)]
 
@@ -138,7 +183,6 @@ class PathProvider(MutableSet[str]):
     __specs: dict[str, spec.ModuleSpec]
     __iter: set[spec.ModuleSpec]
     __roots: set[Path]
-    __ffi_files: set[Path]
 
     def __init__(self, paths: set[str]):
         self.__specs = {}
@@ -146,15 +190,10 @@ class PathProvider(MutableSet[str]):
         self.__queue = set() | paths
         self.__discarded = set()
         self.__roots = set()
-        self.__ffi_files = set()
 
     @property
     def specs(self):
         return self.__specs
-
-    @property
-    def ffi_files(self) -> set[Path]:
-        return self.__ffi_files
 
     @property
     def roots(self) -> set[Path]:
@@ -186,7 +225,7 @@ class PathProvider(MutableSet[str]):
                 raise FileNotFoundError(path)
             if not (await path.is_dir()):
                 if await self.__assert_ffi(path):
-                    self.__ffi_files.add(path)
+                    ns.add_ffi(path)
                     continue
                 if not await self.__assert_file(path):
                     continue
@@ -200,7 +239,7 @@ class PathProvider(MutableSet[str]):
                 for child in children:
                     path_ = root / child
                     if await self.__assert_ffi(path_):
-                        self.__ffi_files.add(path_)
+                        ns[path].register_ffi(path_)
                         continue
                     if not await self.__assert_file(path_):
                         continue
