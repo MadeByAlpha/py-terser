@@ -6,11 +6,10 @@ build-backend = "hatchling.build"
 path = "src/terser/__init__.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/terser"]
+packages = ["src/terser", "src/alpha93/progression"]
 
 [tool.hatch.build.targets.force-include]
 "src/alpha93/commons" = "alpha93/commons"
-"src/alpha93/progression" = "alpha93/progression"
 
 
 [project]
