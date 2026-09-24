@@ -21,7 +21,11 @@ rename_globals = true
 preserve_globals = { "*" = ["add_numbers"] }
 
 [tool.hatch.build.targets.wheel.hooks.terser.config]
-remove_annotations = true
+passes = 3
+contracts = []
+
+[tool.hatch.build.targets.wheel.hooks.terser.config.remove_annotations]
+remove_return_annotations = false
 """
 
 SOURCES = {
@@ -51,7 +55,7 @@ def test_wheel_sources_are_minified(wheel):
     for name, source in sources.items():
         assert len(source) < len(SOURCES["src/" + name])
     assert "result_value" not in sources["demo/math.py"]
-    assert "def add_numbers(" in sources["demo/math.py"]
+    assert "def add_numbers(first_number,second_number)->" in sources["demo/math.py"]
 
 
 def test_wheel_works(wheel, tmp_path):
@@ -60,13 +64,11 @@ def test_wheel_works(wheel, tmp_path):
     assert run_py("-c", code, env={"PYTHONPATH": str(path)}).stdout == "42\n"
 
 
-@pytest.mark.xfail(strict=True, reason="the hook calls anyio's async Path.exists() without awaiting it")
 def test_no_warnings(wheel):
     result, _, _ = wheel
     assert "Warning" not in result.stderr
 
 
-@pytest.mark.xfail(strict=True, reason="the hook leaves its .terser_build directory in the output directory")
 def test_output_directory_is_clean(wheel):
     _, dist, path = wheel
     assert list(dist.iterdir()) == [path]
