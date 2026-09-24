@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from terser.ast import ast, ref
 
 from ._suite import SuiteTransformer

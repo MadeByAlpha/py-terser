@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections.abc import MutableSet
 from typing import TYPE_CHECKING, final, override
 

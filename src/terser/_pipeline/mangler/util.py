@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import fnmatch
 
 from terser.ast import ast, is_constant_node, is_scoped, ref

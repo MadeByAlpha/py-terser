@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 if __debug__ and __import__("typing").TYPE_CHECKING:
     from collections.abc import Callable
     from typing import Any

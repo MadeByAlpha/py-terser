@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from alpha93.commons import typed
 
 from ...ast import ast

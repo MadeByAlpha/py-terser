@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from terser.ast import ast, is_constant_node, ref
 from ._suite import SuiteTransformer
 

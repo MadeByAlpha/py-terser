@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import override, TYPE_CHECKING
 
 from terser.ast import ast, ref

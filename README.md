@@ -10,7 +10,7 @@ A mangler/minifier toolkit for Python.
 
 Transforms Python project into its most compact representation.
 
-py-terser currently supports Python 3.10 to Python 3.14.
+py-terser currently supports Python 3.13 to Python 3.14.
 
 - **Single-file mode** — minifies one module (or stdin) on its own, like `python-minifier`.
 - **Project mode** — minifies a whole directory tree at once. Imports are linked across modules, which enables

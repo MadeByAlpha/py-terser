@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from alpha93.progression import EmptyTask
 
 from ._minify import minify as __minify, unparse as __unparse

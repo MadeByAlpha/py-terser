@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import terser.ast.ast as ast
 
 from terser._pipeline.transforms._suite import SuiteTransformer

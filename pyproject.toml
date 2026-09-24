@@ -35,9 +35,6 @@ classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     #"Programming Language :: Python :: 3.15",  # TODO
@@ -51,7 +48,7 @@ classifiers = [
     "Development Status :: 3 - Alpha",
 ]
 
-requires-python = ">=3.10"
+requires-python = ">=3.13"
 dependencies = [
     "anyio>=4.14.2",
     "hatchling>=1.17",
@@ -88,7 +85,7 @@ terser = "terser.hooks"
 
 [tool.ruff]
 src = ["src"]
-target-version = "py314"    # INTENDED: due to type annotations
+target-version = "py313"
 show-fixes = true
 
 unsafe-fixes = true
@@ -111,4 +108,4 @@ pythonpath = ["tests"]
 
 [tool.ty.environment]
 root = ["./src"]
-python-version = "3.14"     # INTENDED: due to type annotations
+python-version = "3.13"

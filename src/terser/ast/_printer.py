@@ -9,6 +9,8 @@ This is not intended to be a complete representation of the AST, some
 fields or field names may be omitted for clarity. It should still be precise and unambiguous.
 
 """
+
+from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from . import ast

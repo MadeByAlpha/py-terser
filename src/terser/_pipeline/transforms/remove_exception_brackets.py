@@ -8,6 +8,8 @@ When printed, this essentially removes the brackets from the exception name.
 We can't generally know if a name refers to an exception, so we only do this for builtin exceptions
 """
 
+from __future__ import annotations
+
 from terser.ast import ast, ref
 from ..resolver.binding import BuiltinBinding
 

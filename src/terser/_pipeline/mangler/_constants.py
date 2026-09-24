@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from terser.ast import NodeVisitor, ast, ref, is_constant_node
 from terser.ast.ref._node import NodeRef
 from ..resolver.binding import Binding

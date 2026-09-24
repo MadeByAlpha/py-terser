@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import typing
 from dataclasses import is_dataclass
@@ -25,7 +27,10 @@ else:
         def __hash__(self) -> int:
             return hash(type(self))
 
-UnionConstructor: Any = UnionType
+def _is_union(annotation: Any) -> bool:
+    # `X | Y` is a types.UnionType, while typing.Union[X, Y] is only a UnionType since Python 3.14
+    return get_origin(annotation) in (typing.Union, UnionType)
+
 LiteralGenericAlias = getattr(typing, "_LiteralGenericAlias")
 
 
@@ -59,7 +64,7 @@ class _ModelArgumentBuilder:
                 continue
 
             types: list[Any] = [annotation]
-            if isinstance(annotation, UnionType):
+            if _is_union(annotation):
                 types = list(get_args(annotation))
 
             models = set(filter(lambda x: isinstance(x, type(BaseModel)) or is_dataclass(x), types))
@@ -74,7 +79,7 @@ class _ModelArgumentBuilder:
             )
 
             if len(type_params := set(types) - models):
-                annotation = UnionConstructor[tuple(type_params)]
+                annotation = typing.Union[tuple(type_params)]  # noqa: UP007 - built from a runtime tuple
                 self.__add_arg(group, field, field_info, annotation) # type: ignore[invalid-type]
 
             for type_param in models:
@@ -85,7 +90,7 @@ class _ModelArgumentBuilder:
             self.__iter_fields(parser, model)   # type: ignore[invalid-type]
             return
 
-        if isinstance(model, UnionType):
+        if _is_union(model):
             non_none = [t for t in get_args(model) if t is not type(None)]
             model = non_none[0] if len(non_none) == 1 else None
 
