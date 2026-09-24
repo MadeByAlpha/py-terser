@@ -7,10 +7,7 @@ from terser.utils import contracts
 
 @pytest.mark.parametrize("source,expected", [
     ("from typing import cast\nx = cast(int, y)", "from typing import cast\nx = y"),
-    pytest.param(
-        "from typing import cast as c\nx = c(int, y)", "from typing import cast as c\nx = y",
-        marks=pytest.mark.xfail(strict=True, reason="contracts match the local name, not the imported one"),
-    ),
+    ("from typing import cast as c\nx = c(int, y)", "from typing import cast as c\nx = y"),
     ("from typing import assert_type\nx = assert_type(y, int)", "from typing import assert_type\nx = y"),
     ("from typing import assert_never\nassert_never(y)", "from typing import assert_never\nNone"),
     # not the contracted function

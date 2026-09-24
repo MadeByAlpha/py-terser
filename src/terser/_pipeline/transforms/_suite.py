@@ -180,6 +180,27 @@ class SuiteTransformer(NodeVisitor, ABC):
 
         return node
 
+    def visit_TryStar(self, node: ast.TryStar):
+        return self.visit_Try(node) # type: ignore[ty:invalid-argument-type]
+
+    @override
+    def visit_ExceptHandler(self, node: ast.ExceptHandler):
+        if node.type is not None:
+            node.type = self.visit(node.type)
+
+        node.body = self.suite(node.body, parent=node)
+        return node
+
+    @override
+    def visit_match_case(self, node: ast.match_case):
+        node.pattern = self.visit(node.pattern)
+
+        if node.guard is not None:
+            node.guard = self.visit(node.guard)
+
+        node.body = self.suite(node.body, parent=node)
+        return node
+
     @override
     def visit_While(self, node: ast.While):
         node.test = self.visit(node.test)

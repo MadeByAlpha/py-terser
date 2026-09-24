@@ -45,7 +45,9 @@ class Contracts(SuiteTransformer):
             if not isinstance(binding, ImportBinding):
                 return node
 
-            name1 = f"{binding.source_module}.{binding.name}"
+            # the imported name, which differs from the bound one for `from x import y as z`
+            imported = binding.node.name if isinstance(binding.node, ast.alias) else binding.name
+            name1 = f"{binding.source_module}.{imported}"
             if name1 not in self._contracts:
                 return node
 
