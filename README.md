@@ -52,8 +52,8 @@ The mode is chosen from the given paths:
 | Paths                           | Mode        | Output                                                  |
 |---------------------------------|-------------|---------------------------------------------------------|
 | `-`                             | single-file | Reads stdin, writes stdout (or `--output`)              |
-| a single file                   | single-file | stdout, `--output FILE` or `--in-place True`            |
-| a directory, or multiple paths  | project     | `--output DIR` or `--in-place True` (one is required)   |
+| a single file                   | single-file | stdout, `--output FILE` or `--in-place`                 |
+| a directory, or multiple paths  | project     | `--output DIR` or `--in-place` (one is required)        |
 
 In project mode, directories are searched recursively for `*.py`/`*.pyw` files, and the output directory mirrors the
 input layout.
@@ -71,16 +71,16 @@ terser example.py
 terser example.py --output example.min.py
 
 # Minify a file in place
-terser example.py --in-place True
+terser example.py --in-place
 
 # Minify a whole project into a separate directory
 terser src/ --output build/
 
 # Minify multiple paths in place
-terser file1.py file2.py src/ --in-place True
+terser file1.py file2.py src/ --in-place
 
 # Also rename global names and module names across the project
-terser src/ --output build/ --rename-globals True --rename-modules True
+terser src/ --output build/ --rename-globals --rename-modules
 
 # Keep only modules reachable from `app.main` (tree-shaking)
 terser src/ --output build/ --entry app.main
@@ -90,7 +90,8 @@ terser src/ --output build/ --entry app.main
 
 ### Options
 
-Boolean options take an explicit value, e.g. `--rename-locals False`. Options that accept several values
+Boolean options can be given alone (`--rename-globals`) or with a value (`--rename-locals False`; `yes`/`no` and
+`1`/`0` also work). Options that accept several values
 (`--preserve-locals`, `--preserve-globals`, `--preserve-modules`, `--entry`, `--contracts`) can be given
 multiple values, and can be repeated.
 
@@ -136,7 +137,7 @@ multiple values, and can be repeated.
 | `--hoist-literals`           | `True`  | Replace frequently used literals with short-named variables                   |
 | `--rename-locals`            | `True`  | Rename local (including nonlocal) names                                        |
 | `--preserve-locals NAMES`    | —       | Local names that are not renamed. See [Preserving names](#preserving-names)   |
-| `--rename-globals`           | `False` | Rename global names across the project. Project mode only                     |
+| `--rename-globals`           | `False` | Rename module-level names. In project mode, importers in other modules follow |
 | `--preserve-globals NAMES`   | —       | Global names that are not renamed                                              |
 | `--rename-modules`           | `False` | Rename module/package files and directories. Project mode only, requires `--output` |
 | `--preserve-modules PATTERN` | —       | Glob patterns over dotted module paths; matching modules keep their name      |
@@ -148,10 +149,10 @@ limit them to matching modules (matched against the dotted module path, or the f
 
 ```shell
 # Keep `config` and `logger` in every module
-terser src/ --output build/ --rename-globals True --preserve-globals config,logger
+terser src/ --output build/ --rename-globals --preserve-globals config,logger
 
 # Keep `handler` only in modules under `app.api`
-terser src/ --output build/ --rename-globals True --preserve-globals 'app.api.*:handler'
+terser src/ --output build/ --rename-globals --preserve-globals 'app.api.*:handler'
 ```
 
 ### Tree-shaking
@@ -160,7 +161,7 @@ When `--entry` is given, modules that are not reachable (through imports) from a
 output. Entry modules are never renamed by `--rename-modules`.
 
 ```shell
-terser src/ --output build/ --entry app.main app.cli --rename-modules True
+terser src/ --output build/ --entry app.main app.cli --rename-modules
 ```
 
 ## Hatch build hook

@@ -6,38 +6,38 @@ import terser
 
 from .._pipeline.mangler.util import preserved_names
 from ..exceptions import UnbeneficialMinificationError
-from ._argparse import arguments_from_model
+from ._argparse import arguments_from_model, normalize_bool_flags
 from ._argv import TerserArguments, TerserParsedArguments, parse_preserve
 from ._tqdm import TqdmReporter
 
 STDIN = '-'
 
-def main():
+def main(argv: list[str] | None = None):
     """
     examples:
       # Minifying stdin to stdout
-      pyminify -
+      terser -
 
       # Minifying a file to stdout
-      pyminify example.py
+      terser example.py
 
       # Minifying a file and writing to a different file
-      pyminify example.py --output example.min.py
+      terser example.py --output example.min.py
 
       # Minifying a file in place
-      pyminify example.py --in-place
+      terser example.py --in-place
 
       # Minifying all *.py files in a directory
-      pyminify src/ --in-place
+      terser src/ --in-place
 
       # Minifying a directory to a separate output directory
-      pyminify src/ --output build/
+      terser src/ --output build/
 
       # Minifying multiple paths in place
-      pyminify file1.py file2.py src/ --in-place
+      terser file1.py file2.py src/ --in-place
     """
 
-    args = _argv()
+    args = _argv(argv)
 
     # for single files
     if (paths_size := len(args.path)) <= 1 and (not paths_size or (p := next(iter(args.path))) == STDIN or os.path.isfile(p)):
@@ -69,8 +69,8 @@ def main():
             # Use original source when minification isn't beneficial
             minified = source
 
-        if args.output_options.output:
-            with open(args.output_options.output, 'w') as f:
+        if destination := args.output_options.output or (args.output_options.in_place and path):
+            with open(destination, 'w') as f:
                 f.write(minified)
         else:
             sys.stdout.write(minified)
@@ -100,7 +100,7 @@ def main():
     return
 
 
-def _argv() -> TerserParsedArguments:
+def _argv(argv: list[str] | None = None) -> TerserParsedArguments:
     python_minifier = __import__("terser")
     parser = argparse.ArgumentParser("terser", None, python_minifier.__doc__, main.__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     #parser.add_argument("--help", "-h", action="help")
@@ -114,7 +114,7 @@ def _argv() -> TerserParsedArguments:
     )
 
     arguments_from_model(parser, TerserArguments)
-    args = TerserParsedArguments.from_argparse(parser.parse_args())
+    args = TerserParsedArguments.from_argparse(parser.parse_args(normalize_bool_flags(parser, sys.argv[1:] if argv is None else argv)))
 
     # Handle some invalid argument combinations
     if '-' in args.path and len(args.path) != 1:

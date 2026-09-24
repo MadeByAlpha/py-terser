@@ -6,8 +6,6 @@ import pytest
 from helpers import read_tree, run_py, run_terser, write_tree
 from terser.config import RemoveAnnotationOptions, TransformConfig
 
-_xfail_bool = pytest.mark.xfail(strict=True, reason="boolean options use type=bool, so 'False' parses as True")
-_xfail_argv = pytest.mark.xfail(strict=True, reason="the CLI can't be driven with an argv list")
 
 SOURCE = """\
 #!/usr/bin/env python3
@@ -63,10 +61,15 @@ def test_file_to_output(example, tmp_path):
     assert example.read_text() == SOURCE
 
 
-@_xfail_bool
-@pytest.mark.parametrize("flag", [["--in-place"], ["--in-place", "True"], ["--in-place", "true"]])
-def test_file_in_place(example, flag):
-    run_terser(example, *flag)
+@pytest.mark.parametrize("args", [
+    ["{example}", "--in-place"],
+    ["{example}", "--in-place", "True"],
+    ["{example}", "--in-place", "true"],
+    ["--in-place", "{example}"],
+    ["--in-place=yes", "{example}"],
+])
+def test_file_in_place(example, args):
+    run_terser(*(a.format(example=example) for a in args))
     assert len(example.read_text()) < len(SOURCE)
     assert run_py(example).stdout == "Hello, World\n"
 
@@ -88,7 +91,6 @@ def test_directory_in_place(project):
     assert run_py("main.py", cwd=project).stdout == "42\n"
 
 
-@_xfail_bool
 def test_boolean_option_false(project, tmp_path):
     output = tmp_path / "out"
     run_terser(project, "--output", output, "--rename-locals", "False")
@@ -101,7 +103,6 @@ def test_boolean_option_true(project, tmp_path):
     assert "doubled_value" not in (output / "helper.py").read_text()
 
 
-@pytest.mark.xfail(strict=True, reason="Literal options are passed to argparse as type=Literal[...]")
 def test_optimize(project, tmp_path):
     run_terser(project, "--output", tmp_path / "out", "--optimize", "2")
 
@@ -132,7 +133,6 @@ def test_invalid_arguments(args, message, example, project):
     assert message in result.stderr
 
 
-@pytest.mark.xfail(strict=True, reason="the MutuallyExclusive marker is never detected, so no group is created")
 def test_output_and_in_place_are_exclusive(example, tmp_path):
     result = run_terser(example, "--output", tmp_path / "x.py", "--in-place", "True", check=False)
     assert result.returncode == 2
@@ -157,12 +157,10 @@ def _argv(*args: str):
     return _argv(["file.py", *args])
 
 
-@_xfail_argv
 def test_defaults_match_transform_config():
     assert _argv().transform_options == TransformConfig()
 
 
-@_xfail_argv
 def test_every_transform_option_is_forwarded():
     parsed = _argv(
         "--passes", "2",
@@ -207,12 +205,31 @@ def test_every_transform_option_is_forwarded():
     assert {f.name for f in dataclasses.fields(TransformConfig) if getattr(expected, f.name) == getattr(TransformConfig(), f.name)} == set()
 
 
-@_xfail_argv
 def test_remove_annotations_false():
     assert _argv("--remove-annotations", "False").transform_options.remove_annotations is False
 
 
-@_xfail_argv
+@pytest.mark.parametrize("args,expected", [
+    ([], False),
+    (["--rename-globals"], True),
+    (["--rename-globals", "False"], False),
+    (["--rename-globals", "no"], False),
+    (["--rename-globals", "1"], True),
+    (["--rename-globals=0"], False),
+])
+def test_boolean_values(args, expected):
+    assert _argv(*args).mangling_options.rename_globals is expected
+
+
+def test_bare_boolean_flag_before_path():
+    from terser.cli.main import _argv
+
+    parsed = _argv(["--rename-globals", "file.py", "--rename-locals"])
+    assert parsed.mangling_options.rename_globals is True
+    assert parsed.mangling_options.rename_locals is True
+    assert parsed.path == {"file.py"}
+
+
 def test_mangling_options():
     parsed = _argv(
         "--hoist-literals", "False",

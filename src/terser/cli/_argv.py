@@ -1,6 +1,7 @@
-from typing import TYPE_CHECKING, Annotated
+import dataclasses
+from typing import TYPE_CHECKING, Annotated, Any
 
-from alpha93.commons.pydantic import dataclasses
+from alpha93.commons.pydantic import dataclasses as pydantic_dataclasses
 from pydantic import BaseModel, ConfigDict, Field
 
 from terser.config import TransformConfig, RemoveAnnotationOptions
@@ -11,7 +12,7 @@ if TYPE_CHECKING:
 
 
 _config = ConfigDict(use_attribute_docstrings=True)
-PydanticTransformOptions = dataclasses.to_model(TransformConfig)
+PydanticTransformOptions = pydantic_dataclasses.to_model(TransformConfig)
 
 
 def parse_preserve(args: set[str]) -> dict[str, list[str]]:
@@ -62,7 +63,7 @@ class ManglingOptions(BaseModel):
     glob pattern and ':' to scope to matching modules, e.g. 'foo.bar:baz,qux'"""
 
     rename_globals: bool = False
-    """Mangle global names (requires --in-place, since this needs whole-project linking)"""
+    """Mangle global (module-level) names. In project mode, references from other modules follow the rename"""
 
     preserve_globals: Annotated[set[str], Field(default_factory=set)]
     """Comma-separated list of global names that will not be mangled. Prefix with a
@@ -104,7 +105,12 @@ class TerserArguments(BaseModel):
     paths, or --in-place. If given, modules unreachable from these are dropped from the output
     (tree-shaking), and these modules are never renamed by --rename-modules"""
 
-# TODO: Cleanup this shit
+def _given(namespace: Namespace, names, /) -> dict[str, Any]:
+    """Values of `names` that were set on the command line (unset collection options are None)."""
+
+    return {name: value for name in names if (value := getattr(namespace, name)) is not None}
+
+
 class TerserParsedArguments(TerserArguments):
     path: set[str]
 
@@ -116,42 +122,24 @@ class TerserParsedArguments(TerserArguments):
         )
 
         remove_annotations = RemoveAnnotationOptions(
-            remove_variable_annotations=namespace.remove_variable_annotations,
-            remove_return_annotations=namespace.remove_return_annotations,
-            remove_argument_annotations=namespace.remove_argument_annotations,
-            remove_attribute_annotations=namespace.remove_attribute_annotations,
-        )
-        transform_options = TransformConfig(
-            optimize=namespace.optimize,
-            remove_literal_statements=namespace.remove_literal_statements,
-            combine_imports=namespace.combine_imports,
-            remove_annotations=remove_annotations if namespace.remove_annotations else False,
-            remove_explicit_base=namespace.remove_explicit_base,
-            remove_explicit_return_none=namespace.remove_explicit_return_none,
-            fold_constants=namespace.fold_constants,
-            remove_debug=namespace.remove_debug,
-            convert_pass=namespace.convert_pass,
-            remove_empty_exc_brackets=namespace.remove_empty_exc_brackets,
-            convert_posargs=namespace.convert_posargs,
+            **_given(namespace, (f.name for f in dataclasses.fields(RemoveAnnotationOptions)))
         )
 
-        mangling_options = ManglingOptions(
-            hoist_literals=namespace.hoist_literals,
-            rename_locals=namespace.rename_locals,
-            preserve_locals=namespace.preserve_locals,
-            rename_globals=namespace.rename_globals,
-            preserve_globals=namespace.preserve_globals,
-            rename_modules=namespace.rename_modules,
-            preserve_modules=namespace.preserve_modules,
-        )
+        # every other TransformConfig field maps 1:1 to an option of the same name
+        transform_options = TransformConfig(**_given(
+            namespace,
+            (f.name for f in dataclasses.fields(TransformConfig) if f.name != "remove_annotations"),
+        ), remove_annotations=(
+            (remove_annotations if remove_annotations != RemoveAnnotationOptions() else True)
+            if namespace.remove_annotations else False
+        ))
+
+        mangling_options = ManglingOptions(**_given(namespace, ManglingOptions.model_fields))
 
         return cls(
-            path=namespace.path,
+            path=set(namespace.path),
             output_options=output_options,
-            preserve_shebang=namespace.preserve_shebang,
-            prefer_single_line=namespace.prefer_single_line,
             transform_options=transform_options,
             mangling_options=mangling_options,
-            workers=namespace.workers,
-            entry=namespace.entry,
+            **_given(namespace, ("preserve_shebang", "prefer_single_line", "workers", "entry")),
         )
