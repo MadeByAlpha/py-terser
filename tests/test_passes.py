@@ -9,8 +9,6 @@ from terser._pipeline import mangler, parser, transforms
 from terser._pipeline.transforms._suite import SuiteTransformer, TransformCache, TransformerFlag
 from terser.ast import ast, ref
 
-pytestmark = pytest.mark.xfail(strict=True, reason="pass tracking is not implemented (TransformCache.passes is never filled)")
-
 
 def renamer(old: str, new: str, flags: int = 0):
     """A transform that renames every `old` name to `new`, counting how many times it ran."""

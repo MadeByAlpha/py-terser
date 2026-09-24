@@ -2,7 +2,7 @@ from alpha93.progression import EmptyTask
 
 from ._minify import minify as __minify, unparse as __unparse
 from ._pipeline import linker, mangler, transforms
-from .ast import DummySpec, ast, ref
+from .ast import DummySpec, ref
 from .config import TransformConfig
 from .project import ProjectMinifier
 
@@ -68,24 +68,9 @@ def minify(
     project = {str(module_ref.spec): module_ref}
     linker.link(module, project)
 
-    cache = transforms.TransformCache(config)
-    for _ in range(config.passes):
-        for transform in transforms.__transforms__:
-            if not transform.is_enabled(config) or transform.FLAGS > 2:
-                continue
-
-            module: ast.Module = transform(cache)(module)
-
-        if not any(cache.passes.values()):
-            break
-
+    module = transforms.TransformCache(config).run_passes(module, 2)
     mangler.mangle_globals(project, rename_globals, {"*": list(preserve_globals or ())})
-
-    for transform in transforms.__transforms__:
-        if not transform.is_enabled(config) or transform.FLAGS > 4:
-            continue
-
-        module: ast.Module = transform(cache)(module)
+    module = transforms.TransformCache(config).run_passes(module, 4)
 
     minified = __unparse(path, source, module, prefer_single_line=prefer_single_line)
     return (shebang + '\n' + minified) if preserve_shebang and shebang else minified

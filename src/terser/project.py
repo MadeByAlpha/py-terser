@@ -188,18 +188,18 @@ class ProjectMinifier(Pipeline):
             with self.__reporter("Mangling modules"):
                 new_dotted = mangler.mangle_modules(project, self.rename_modules, self.preserve_modules, entry)
 
-            cache = transforms.TransformCache(self.__config)
-            modules_len = len(modules)
+            # whole passes over every module, until a pass changes none of them
+            caches = [transforms.TransformCache(self.__config) for _ in modules]
+            modules_len, changed = len(modules), False
             for j in self.__reporter("Applying transforms", range(self.__config.passes * len(modules))):
                 i = j % modules_len
-                for transform in transforms.__transforms__:
-                    if not transform.is_enabled(self.__config) or transform.FLAGS > 2:
-                        continue
+                modules[i], modified = caches[i].run(modules[i], 2)
+                changed |= modified
 
-                    modules[i] = transform(cache)(modules[i])
-
-                if not i and not any(cache.passes.values()):
-                    break
+                if i == modules_len - 1:
+                    if not changed:
+                        break
+                    changed = False
 
             # for richer progress bar support
             iter_ = iter(self.__reporter("Mangling", range(-1, modules_len)))
@@ -207,11 +207,8 @@ class ProjectMinifier(Pipeline):
             mangler.mangle_globals(project, self.rename_globals, self.preserve_globals)
 
             for i in iter_:
-                for transform in transforms.__transforms__:
-                    if not transform.is_enabled(self.__config) or transform.FLAGS > 4:
-                        continue
-
-                    modules[i] = transform(cache)(modules[i])
+                # global mangling changed the modules, so the caches start over
+                modules[i] = transforms.TransformCache(self.__config).run_passes(modules[i], 4)
 
             await self.__dump_results(modules, project, new_dotted)
 
