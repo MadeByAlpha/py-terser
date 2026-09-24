@@ -107,7 +107,6 @@ def test_optimize(project, tmp_path):
     run_terser(project, "--output", tmp_path / "out", "--optimize", "2")
 
 
-@pytest.mark.xfail(strict=True, reason="remove_literal_statements crashes on `node.bindings`")
 def test_remove_literal_statements(tmp_path):
     project = write_tree(tmp_path / "project", {
         "main.py": '"""Module docstring."""\n\ndef f():\n    """Function docstring."""\n    return 1\n\nprint(f())\n',
@@ -116,6 +115,17 @@ def test_remove_literal_statements(tmp_path):
     result = run_terser(project, "--output", output, "--remove-literal-statements", "True")
     assert "Error" not in result.stderr
     assert "docstring" not in (output / "main.py").read_text()
+
+
+def test_error_in_project(tmp_path):
+    project = write_tree(tmp_path / "project", {"good.py": "x = 1\n", "bad.py": "def f(:\n"})
+    result = run_terser(project, "--output", tmp_path / "out", check=False)
+    assert result.returncode == 1
+    # the worker's error itself, not an exception group, and no noise from progress bars at shutdown
+    assert result.stderr.rstrip().endswith("SyntaxError: invalid syntax")
+    assert "bad.py" in result.stderr
+    assert "Exception Group" not in result.stderr
+    assert "Exception ignored" not in result.stderr
 
 
 @pytest.mark.parametrize("args,message", [

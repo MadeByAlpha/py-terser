@@ -3,8 +3,6 @@ import pytest
 from helpers import apply_transform, assert_code, only
 from terser._pipeline.transforms import RemoveLiteralStatements
 
-pytestmark = pytest.mark.xfail(strict=True, reason="visit_Module reads `bindings` from the AST node instead of its ref")
-
 
 @pytest.mark.parametrize("source,expected", [
     ('"""module doc"""\nx = 1', "x = 1"),
@@ -18,10 +16,14 @@ def test_remove_literal_statements(source, expected):
     assert_code(apply_transform(source, RemoveLiteralStatements, config), expected)
 
 
-@pytest.mark.parametrize("source", [
-    '"""module doc"""\nprint(__doc__)',
-    '"""module doc"""\ndef f():\n    return __doc__',
+@pytest.mark.parametrize("source,expected", [
+    ('"""module doc"""\nprint(__doc__)', '"""module doc"""\nprint(__doc__)'),
+    ('"""module doc"""\ndef f():\n    """doc"""\n    return __doc__', '"""module doc"""\ndef f():\n    return __doc__'),
+    ('"""module doc"""\n"stray"\nprint(__doc__)', '"""module doc"""\nprint(__doc__)'),
+    ('class A:\n    """doc"""\n    x = __doc__', 'class A:\n    """doc"""\n    x = __doc__'),
+    # any object's docstring might be read, so everything is kept
+    ('"""module doc"""\ndef f():\n    """doc"""\nprint(f.__doc__)', '"""module doc"""\ndef f():\n    """doc"""\nprint(f.__doc__)'),
 ])
-def test_module_docstring_kept_when_used(source):
+def test_docstrings_kept_when_used(source, expected):
     config = only("remove_literal_statements")
-    assert_code(apply_transform(source, RemoveLiteralStatements, config), source)
+    assert_code(apply_transform(source, RemoveLiteralStatements, config), expected)

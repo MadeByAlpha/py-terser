@@ -1,5 +1,6 @@
 import os
 import shutil
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 import anyio
@@ -24,6 +25,19 @@ if TYPE_CHECKING:
     from .config import TransformConfig
 
     type Awaitable[T] = Coroutine[Any, Any, T]
+
+
+@asynccontextmanager
+async def _task_group():
+    """A task group that re-raises its only exception by itself, instead of burying it in a group."""
+
+    try:
+        async with anyio.create_task_group() as tg:
+            yield tg
+    except BaseExceptionGroup as group:
+        if len(group.exceptions) == 1:
+            raise group.exceptions[0] from None
+        raise
 
 
 async def _read_async(path: Path, /, *, limiter: CapacityLimiter) -> str:
@@ -219,7 +233,7 @@ class ProjectMinifier(Pipeline):
             modules[i] = module
             task.done()
 
-        async with anyio.create_task_group() as tg:
+        async with _task_group() as tg:
             # TODO: Cleanup this shit
             j = len(self.__module_specs) - 1
             for i, (task, spec) in enumerate(self.__reporter.iter(self.__module_specs, "Compiling modules")):
@@ -301,7 +315,7 @@ class ProjectMinifier(Pipeline):
             return wrapper
 
         tasks = set(map(wrap(module), modules)) | set(map(wrap(binary), self.__ffi_specs))
-        async with anyio.create_task_group() as tg:
+        async with _task_group() as tg:
             j = len(tasks) - 1
             for i, (task, func) in enumerate(self.__reporter.iter(tasks, "Writing output")):
                 # noinspection async-call

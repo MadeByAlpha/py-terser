@@ -119,16 +119,18 @@ class _TqdmTaskProvider(TaskProvider, _StateHolder):
     def close_task(self, /):
         self.__ctx.next()
 
-    def __init__(self, context: _Context[TqdmDebugTaskGraph.Task], parent: tqdm, message: str, /):
+    def __init__(self, context: _Context[TqdmDebugTaskGraph.Task], parent: tqdm, message: str, bars: list[tqdm], /):
         self.__ctx = context
         self.__msg = message
         self.__cur = 0
 
         self.__parent = parent
         self.__lock = Lock()
+        self.__bars = bars
 
     def __enter__(self) -> None:
         self.__bar: tqdm = tqdm(total=len(self.__ctx._tg) * self.__ctx._tg.steps_size, leave=False)
+        self.__bars.append(self.__bar)
         self.__ctx.enter(self.__msg)
 
     # noinspection argument-list,bad-return
@@ -153,6 +155,9 @@ class TqdmReporter(BaseReporter, _StateHolder):
     def __init__(self):
         self.__bar: tqdm = tqdm()
         self.__phase = 0
+        # every bar this reporter created, closed together in `close()` - a bar left open is only
+        # closed by its finalizer, which fails noisily during interpreter shutdown
+        self.__bars: list[tqdm] = [self.__bar]
 
     def set_status(self, status: str):
         self.__bar.set_description_str(status)
@@ -197,10 +202,13 @@ class TqdmReporter(BaseReporter, _StateHolder):
 
         assert self.__step is None
         self.__step = phase
-        return _TqdmTaskProvider(_Context(self, phase), self.__bar, message)
+        return _TqdmTaskProvider(_Context(self, phase), self.__bar, message, self.__bars)
 
     @override
     def close(self):
         self.update(1)
         self.__bar.display('', pos=1)
         self.__bar.display(pos=0)
+
+        for bar in reversed(self.__bars):
+            bar.close()

@@ -2,28 +2,33 @@ from terser.ast import ast, is_constant_node
 from ._suite import SuiteTransformer
 
 
-def find_doc(node):
+def _reads_doc(module: ast.Module) -> tuple[bool, bool]:
+    """
+    Whether `module` reads its own `__doc__`, and whether it reads any other docstring
+    (`x.__doc__`, or `__doc__` inside a class).
+    """
 
-    if isinstance(node, ast.Attribute) and node.attr == '__doc__':
-        raise ValueError('__doc__ found!')
-
-    for child in ast.iter_child_nodes(node):
-        find_doc(child)
-
-
-def _doc_in_module(module):
-    try:
-        find_doc(module)
-        return False
-    except Exception:
-        return True
+    name = other = False
+    for node in ast.walk(module):
+        if isinstance(node, ast.Name) and node.id == '__doc__':
+            name = True
+        elif isinstance(node, ast.Attribute) and node.attr == '__doc__':
+            other = True
+        elif isinstance(node, ast.ClassDef) and any(
+            isinstance(n, ast.Name) and n.id == '__doc__' for n in ast.walk(node)
+        ):
+            # inside a class body, `__doc__` is the class's own docstring
+            other = True
+    return name, other
 
 
 class RemoveLiteralStatements(SuiteTransformer):
     """
     Remove literal expressions from the code
 
-    This includes docstrings
+    This includes docstrings. This only looks at syntax (it runs before names are bound): the
+    module docstring is kept when `__doc__` is read anywhere in the module, and nothing is removed
+    when any `x.__doc__` is read, since that could be any function's or class's docstring.
     """
     FLAGS = 0
 
@@ -31,16 +36,14 @@ class RemoveLiteralStatements(SuiteTransformer):
     def is_enabled(cls, config, /) -> bool:
         return config.remove_literal_statements
 
-    def __call__(self, node):
-        if _doc_in_module(node):
-            return node
-        return self.visit(node)
-
     def visit_Module(self, node):
-        for binding in node.bindings:
-            if binding.spec == '__doc__':
-                node.body = [self.visit(a) for a in node.body]
-                return node
+        reads_module_doc, reads_other_doc = _reads_doc(node)
+        if reads_other_doc:
+            return node
+
+        if reads_module_doc and node.body and self.is_literal_statement(node.body[0]):
+            node.body = [node.body[0], *self.suite(node.body[1:], parent=node)]
+            return node
 
         node.body = self.suite(node.body, parent=node)
         return node
