@@ -7,8 +7,6 @@ import pytest
 
 from helpers import SRC, read_tree, run_terser, write_tree
 
-pytestmark = pytest.mark.xfail(strict=True, reason="PackageSpec uses rstrip('.__init__'), e.g. 'ast' becomes 'as'")
-
 SAMPLE = {
     "main.py": "from util import greet\n\nfor name in ['a', 'b']:\n    print(greet(name))\n",
     "util.py": (
@@ -36,6 +34,7 @@ def test_every_module_is_minified(minified_src):
     assert sum(map(len, minified.values())) < sum(map(len, original.values()))
 
 
+@pytest.mark.xfail(strict=True, reason="RemoveDebug drops the else branch of `if __debug__: ... else: ...`")
 def test_minified_terser_works(minified_src, tmp_path):
     sample = write_tree(tmp_path / "sample", SAMPLE)
 

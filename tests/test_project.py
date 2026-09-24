@@ -153,7 +153,6 @@ def test_preserve_modules(app, tmp_path):
     assert run_py("main.py", cwd=out).stdout == EXPECTED_OUTPUT
 
 
-@pytest.mark.xfail(strict=True, reason="a package directory given directly names its __init__ '__init__'")
 def test_multiple_paths(app, tmp_path):
     out = tmp_path / "out"
     minify(app / "main.py", app / "shop", output=out)
@@ -165,7 +164,6 @@ def test_multiple_paths_require_output(app):
         minify(app / "main.py", app / "shop")
 
 
-@pytest.mark.xfail(strict=True, reason="a package directory given directly names its __init__ '__init__'")
 def test_package_directory(app, tmp_path):
     out = tmp_path / "out"
     minify(app / "shop", output=out / "shop")
@@ -177,7 +175,17 @@ def test_package_directory(app, tmp_path):
     assert run_py("main.py", cwd=out).stdout == EXPECTED_OUTPUT
 
 
-@pytest.mark.xfail(strict=True, reason="a package directory given directly names its __init__ '__init__'")
+def test_package_directory_rename_modules(app, tmp_path):
+    out = tmp_path / "out"
+    minify(app / "shop", output=out / "shop", rename_modules=True, rename_globals=True)
+
+    tree = read_tree(out)
+    # the package's own name stays, since its directory name is chosen by the caller
+    assert "shop/__init__.py" in tree
+    assert "shop/cart.py" not in tree
+    assert any("shop." in source for source in tree.values())
+
+
 def test_package_directory_in_place(app):
     minify(app / "shop")
     assert total_size(read_tree(app / "shop")) < total_size({k: v for k, v in APP.items() if k.startswith("shop/")})

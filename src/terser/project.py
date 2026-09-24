@@ -46,10 +46,14 @@ async def _write_async(path: Path, source: str, /, *, limiter: CapacityLimiter):
     finally:
         await source_io.aclose()
 
-def _module_output_path(spec: _spec.ModuleSpec, new_dotted: dict[str, str]) -> Path:
-    """The relative output path a module should be written to, reflecting its mangled name."""
+def _module_output_path(spec: _spec.ModuleSpec, new_dotted: dict[str, str], strip: int = 0) -> Path:
+    """
+    The relative output path a module should be written to, reflecting its mangled name.
 
-    parts = new_dotted.get(str(spec), str(spec)).split('.')
+    :param strip: Number of leading dotted components that the output directory itself stands for
+    """
+
+    parts = new_dotted.get(str(spec), str(spec)).split('.')[strip:]
     if isinstance(spec, _spec.PackageSpec):
         return Path(*parts, "__init__.py")
     return Path(*parts[:-1], parts[-1] + spec.path.suffix)
@@ -99,6 +103,13 @@ class ProjectMinifier(Pipeline):
         self.prefer_single_line = prefer_single_line
         self.rename_modules = rename_modules
         self.preserve_modules = preserve_modules or set()
+
+        # when a single package directory is given, the output directory stands for that package:
+        # its contents are written straight into it, and the package can't be renamed (since its
+        # directory's name is up to the caller)
+        self.__output_package = path_provider.single_package_root
+        if self.__output_package is not None:
+            self.preserve_modules = self.preserve_modules | {self.__output_package}
         self.entry = entry or set()
 
     @classmethod
@@ -256,7 +267,7 @@ class ProjectMinifier(Pipeline):
                 # in-place: write each module back to its own original file
                 dest = spec.path
             else:
-                dest = self.__output / _module_output_path(spec, new_dotted)
+                dest = self.__output / _module_output_path(spec, new_dotted, self.__output_package is not None)
                 await dest.parent.mkdir(parents=True, exist_ok=True)
 
             source = await to_thread.run_sync(unparse, str(spec.path), None, node, self.prefer_single_line)
@@ -273,12 +284,10 @@ class ProjectMinifier(Pipeline):
                 # the containing package was tree-shaken away - no reachable consumer left
                 return
 
-            new_parent = new_dotted.get(parent, parent) if parent else None
-            dest = (
-                self.__output.joinpath(*new_parent.split('.'), ffi_spec.path.name)
-                if new_parent
-                else self.__output / ffi_spec.path.name
-            )
+            new_parent = new_dotted.get(parent, parent).split('.') if parent else []
+            if self.__output_package is not None:
+                new_parent = new_parent[1:]
+            dest = self.__output.joinpath(*new_parent, ffi_spec.path.name)
 
             await dest.parent.mkdir(parents=True, exist_ok=True)
             await to_thread.run_sync(shutil.copy2, str(ffi_spec.path), str(dest))

@@ -17,7 +17,7 @@ class ModuleSpec(ABC):
     @final
     @property
     def name(self) -> str:
-        return self.__namespace.rsplit('.', 1)[1]
+        return self.__namespace.rsplit('.', 1)[-1]
 
     @property
     @abstractmethod
@@ -111,7 +111,7 @@ class PackageSpec(ModuleSpec):
 
     def __init__(self, unresolved: ModuleSpec, parent: PackageSpec | None = None):
         assert str(unresolved).endswith(".__init__")
-        super().__init__(str(unresolved).rstrip(".__init__"))
+        super().__init__(str(unresolved).removesuffix(".__init__"))
         self.__path = unresolved.path.parent
         self.__parent = parent
         self.__children = {}

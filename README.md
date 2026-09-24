@@ -56,7 +56,8 @@ The mode is chosen from the given paths:
 | a directory, or multiple paths  | project     | `--output DIR` or `--in-place` (one is required)        |
 
 In project mode, directories are searched recursively for `*.py`/`*.pyw` files, and the output directory mirrors the
-input layout.
+input layout. A directory that is a package itself (it has an `__init__.py`) keeps its name as the top-level package:
+`terser src/mypkg --output build/mypkg` names its modules `mypkg.*` and writes `build/mypkg/__init__.py`.
 
 ### Examples
 
