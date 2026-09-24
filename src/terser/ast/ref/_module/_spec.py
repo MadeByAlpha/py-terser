@@ -50,7 +50,7 @@ class DummySpec(ModuleSpec):
         if module.startswith(".."):
             raise ImportError(f"Could not resolve module: {module}")
 
-        return module[1:] if module.startswith(".") else module
+        return module.removeprefix(".")
 
 
 @final

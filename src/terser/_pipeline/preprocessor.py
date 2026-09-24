@@ -99,9 +99,8 @@ def preprocess(source: str, defines: Mapping[str, bool] | None, strict: bool = F
         column, text = comment
         if line[:column].strip():
             # inline comment after code
-            if not keeping():
-                output.append("")
-            elif (match := __DIRECTIVES["if"][strict].match(text)) and not defines.get(match.group(1), True):
+            match = __DIRECTIVES["if"][strict].match(text)
+            if not keeping() or (match and not defines.get(match.group(1), True)):
                 output.append("")
             else:
                 output.append(line[:column].rstrip() if match else line)

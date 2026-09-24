@@ -6,7 +6,6 @@ import pytest
 from helpers import read_tree, run_py, run_terser, write_tree
 from terser.config import RemoveAnnotationOptions, TransformConfig
 
-
 SOURCE = """\
 #!/usr/bin/env python3
 from typing import cast

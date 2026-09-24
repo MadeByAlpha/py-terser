@@ -6,7 +6,6 @@ from helpers import assert_code
 from terser._pipeline.preprocessor import preprocess
 
 
-
 def run(source: str, strict: bool = False, **defines: bool) -> str:
     output, _ = preprocess(source, defines, strict)
     return output

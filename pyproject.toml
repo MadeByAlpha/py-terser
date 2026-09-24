@@ -84,7 +84,7 @@ terser = "terser.hooks"
 
 
 [tool.ruff]
-src = ["src"]
+src = ["src", "tests"]
 target-version = "py313"
 show-fixes = true
 

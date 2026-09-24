@@ -41,7 +41,7 @@ print(greet("World"), dict(counter.counts), os.sep == os.path.sep)
 def execute(source: str) -> str:
     stdout = io.StringIO()
     with contextlib.redirect_stdout(stdout):
-        exec(compile(source, "<test>", "exec"), {"__name__": "__main__"})
+        exec(compile(source, "<test>", "exec"), {"__name__": "__main__"})  # noqa: S102 - running the output is the test
     return stdout.getvalue()
 
 

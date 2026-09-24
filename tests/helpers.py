@@ -88,6 +88,7 @@ def run_py(*args: str | os.PathLike, cwd: str | os.PathLike | None = None, stdin
         text=True,
         timeout=120,
         env={**os.environ, **(env or {})},
+        check=False,  # checked below, with the output in the message
     )
     if check and result.returncode:
         raise AssertionError(

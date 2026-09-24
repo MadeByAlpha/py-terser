@@ -1,12 +1,16 @@
+import itertools
 from functools import partial
 
 import anyio
-import pytest
 
 from helpers import write_tree
 from terser import TransformConfig, minify, minify_project
 from terser._pipeline import mangler, parser, transforms
-from terser._pipeline.transforms._suite import SuiteTransformer, TransformCache, TransformerFlag
+from terser._pipeline.transforms._suite import (
+    SuiteTransformer,
+    TransformCache,
+    TransformerFlag,
+)
 from terser.ast import ast, ref
 
 
@@ -37,7 +41,7 @@ def renamer(old: str, new: str, flags: int = 0):
 def chain(depth: int = 2):
     # `b -> a` runs before `c -> b` (and so on), so `c` needs two passes to become `a`
     letters = "abcdefghij"[:depth + 1]
-    return [renamer(new_name, old_name) for old_name, new_name in zip(letters, letters[1:])]
+    return [renamer(new_name, old_name) for old_name, new_name in itertools.pairwise(letters)]
 
 
 def names(module: ast.Module) -> list[str]:
