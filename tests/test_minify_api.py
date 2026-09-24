@@ -106,7 +106,6 @@ def test_prefer_single_line():
     assert execute(single) == execute(source)
 
 
-@pytest.mark.xfail(strict=True, reason="code lines inside inactive blocks are kept")
 def test_defines():
     source = "x = 1\n# if DEBUG\nprint('debug')\n# endif\nprint(x)\n"
     assert "debug" not in terser.minify(source, TransformConfig(), defines={"DEBUG": False})

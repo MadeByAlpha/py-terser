@@ -9,37 +9,24 @@ if TYPE_CHECKING:
     from typing import Final
 
 
-_STRING_TOKEN_TYPES: Final[frozenset[int]] = frozenset(
-    {tokenize.STRING}
-    | ({tokenize.FSTRING_START, tokenize.FSTRING_MIDDLE, tokenize.FSTRING_END} if hasattr(tokenize, "FSTRING_START") else set())
-)
-
-
-def _multiline_string_body_lines(source: str) -> frozenset[int]:
+def _comments(source: str) -> dict[int, tuple[int, str]] | None:
     """
-    1-indexed source line numbers that fall inside the body of a multi-line
-    string/f-string literal (its opening line is excluded, since that line may
-    have real code before the string starts).
+    `{line number: (column, text)}` of every real comment in `source` (1-indexed lines).
 
-    Directive/comment handling in `preprocess` works line-by-line on raw text
-    with no awareness of string literals - without this, a multi-line string
-    whose content happens to contain lines starting with `#` (e.g. a string
-    constant full of example Python source, itself full of real comments) gets
-    its "comment" lines silently dropped, corrupting the string.
+    Directive handling works on comment tokens rather than raw lines, so text that only looks like
+    a comment - e.g. a line starting with `#` inside a multi-line string - is never mistaken for one.
+    None if the source doesn't tokenize; the later parse step raises a proper error for it.
     """
-    body_lines: set[int] = set()
 
+    comments: dict[int, tuple[int, str]] = {}
     try:
-        tokens = tokenize.generate_tokens(io.StringIO(source).readline)
-        for tok in tokens:
-            if tok.type in _STRING_TOKEN_TYPES and tok.start[0] != tok.end[0]:
-                body_lines.update(range(tok.start[0] + 1, tok.end[0] + 1))
+        for tok in tokenize.generate_tokens(io.StringIO(source).readline):
+            if tok.type == tokenize.COMMENT:
+                comments[tok.start[0]] = (tok.start[1], tok.string.rstrip())
     except (tokenize.TokenError, SyntaxError):
-        # if the source doesn't even tokenize, let the later real parse step
-        # raise a proper error - here, just fall back to the old unaware behavior
-        return frozenset()
+        return None
 
-    return frozenset(body_lines)
+    return comments
 
 
 __DIRECTIVES: Final[Mapping[str, Mapping[bool, re.Pattern]]] = {
@@ -61,62 +48,95 @@ __DIRECTIVES: Final[Mapping[str, Mapping[bool, re.Pattern]]] = {
     },
 }
 
-__INLINE_DIRECTIVE: Final[Mapping[bool, re.Pattern]] = {
-    True: re.compile(r"\s*#\s?if ([A-Za-z_][A-Za-z0-9_]*)$"),
-    False: re.compile(r"\s*#\s*if\s+([A-Za-z_][A-Za-z0-9_]*)$")
-}
 
 def preprocess(source: str, defines: Mapping[str, bool] | None, strict: bool = False) -> tuple[str, str | None]:
+    """
+    Evaluate `# if NAME` / `# elif NAME` / `# else` / `# endif` directives, and inline
+    `code  # if NAME` directives.
+
+    Every dropped line (comments, directives, lines of inactive blocks, the shebang) is replaced
+    with an empty line, so line numbers in later errors still match the original source.
+
+    :param source: The module source
+    :param defines: Values of the directive names. Undefined names count as True
+    :param strict: Only accept the exact `#if NAME`/`# if NAME` spelling, and raise SyntaxError
+        for unbalanced directives
+    :return: The preprocessed source, and the shebang line if there was one
+    """
+
     lines = source.splitlines()
     if not lines:
         return "", None
 
-    shebang = lines.pop(0) if lines[0].startswith("#!") else None
+    shebang = lines[0] if lines[0].startswith("#!") else None
     defines: Mapping[str, bool] = defines or {}
 
-    string_body_lines = _multiline_string_body_lines(source)
-    line_offset = 2 if shebang is not None else 1
+    comments = _comments(source)
+    if comments is None:
+        return '\n'.join(["", *lines[1:]] if shebang is not None else lines), shebang
 
-    # Directive evaluation
-    output = []
-    stack: list[tuple[bool, bool | None]] = []
-    keeping = lambda: all(s[0] for s in stack)
+    def error(message: str, lineno: int):
+        return SyntaxError(message, ("<preprocessor>", lineno, 1, lines[lineno - 1]))
 
-    for i, line in enumerate(lines):
-        if (i + line_offset) in string_body_lines:
-            # inside the body of a multi-line string/f-string - pass through
-            # untouched, whatever it looks like isn't a real comment/directive
-            output.append(line)
+    # one (active, taken) pair per open block: whether its current branch is active, and whether
+    # any of its branches has been taken already
+    stack: list[tuple[bool, bool]] = []
+    keeping = lambda: all(active for active, _ in stack)
+
+    output: list[str] = []
+    for lineno, line in enumerate(lines, start=1):
+        if lineno == 1 and shebang is not None:
+            output.append("")
             continue
 
-        stripped = line.strip()
-
-        if not stripped.startswith('#'):
-            if not (match := __INLINE_DIRECTIVE[strict].search(stripped)):
-                output.append(line)
-            elif defines.get(match.group(1), True) and keeping():
-                output.append(line[:match.start()])
+        comment = comments.get(lineno)
+        if comment is None:
+            output.append(line if keeping() else "")
             continue
 
-        # Check block directives
-        if match := __DIRECTIVES["if"][strict].match(stripped):
-            defined: bool = defines.get(match.group(1), True)
-            stack.append((defined and keeping(), defined))
-        elif match := __DIRECTIVES["elif"][strict].match(stripped):
+        column, text = comment
+        if line[:column].strip():
+            # inline comment after code
+            if not keeping():
+                output.append("")
+            elif (match := __DIRECTIVES["if"][strict].match(text)) and not defines.get(match.group(1), True):
+                output.append("")
+            else:
+                output.append(line[:column].rstrip() if match else line)
+            continue
+
+        # a comment on its own line: dropped either way
+        output.append("")
+
+        if match := __DIRECTIVES["if"][strict].match(text):
+            defined = defines.get(match.group(1), True)
+            stack.append((defined, defined))
+        elif match := __DIRECTIVES["elif"][strict].match(text):
             if not stack:
+                if strict:
+                    raise error("'# elif' without '# if'", lineno)
                 continue
 
-            defined: bool = defines.get(match.group(1), True)
-            _, before = stack.pop()
-            stack.append((defined and not before and keeping(), defined))
-        elif __DIRECTIVES["else"][strict].match(stripped):
+            _, taken = stack.pop()
+            defined = defines.get(match.group(1), True)
+            stack.append((defined and not taken, taken or defined))
+        elif __DIRECTIVES["else"][strict].match(text):
             if not stack:
+                if strict:
+                    raise error("'# else' without '# if'", lineno)
                 continue
 
-            _, before = stack.pop()
-            stack.append((not before and keeping(), True))
-        elif __DIRECTIVES["endif"][strict].match(stripped):
-            if stack:
-                stack.pop()
+            _, taken = stack.pop()
+            stack.append((not taken, True))
+        elif __DIRECTIVES["endif"][strict].match(text):
+            if not stack:
+                if strict:
+                    raise error("'# endif' without '# if'", lineno)
+                continue
+
+            stack.pop()
+
+    if stack and strict:
+        raise error("'# if' without '# endif'", len(lines))
 
     return '\n'.join(output), shebang

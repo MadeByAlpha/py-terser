@@ -261,7 +261,8 @@ check_invariants()  # if DEBUG
 
 Values are given with the `defines` argument of the Python API (e.g. `defines={"DEBUG": False}`); names that are
 not defined are treated as `True`. With `strict=True`, only the exact `# if NAME` / `#if NAME` spellings are
-recognized.
+recognized, and an unbalanced directive (e.g. a missing `# endif`) raises `SyntaxError`. Removed lines are replaced
+with empty lines, so line numbers in error messages match the original source.
 
 ## License
 
