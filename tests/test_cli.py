@@ -6,7 +6,6 @@ import pytest
 from helpers import read_tree, run_py, run_terser, write_tree
 from terser.config import RemoveAnnotationOptions, TransformConfig
 
-_xfail_single = pytest.mark.xfail(strict=True, reason="single-file mode instantiates the abstract Task")
 _xfail_bool = pytest.mark.xfail(strict=True, reason="boolean options use type=bool, so 'False' parses as True")
 _xfail_argv = pytest.mark.xfail(strict=True, reason="the CLI can't be driven with an argv list")
 
@@ -44,7 +43,6 @@ def test_version():
     assert run_terser("--version").stdout.strip() == __import__("terser").version
 
 
-@_xfail_single
 def test_file_to_stdout(example):
     result = run_terser(example)
     assert result.stdout.startswith("#!/usr/bin/env python3\n")
@@ -52,14 +50,12 @@ def test_file_to_stdout(example):
     assert run_py("-c", result.stdout).stdout == "Hello, World\n"
 
 
-@_xfail_single
 def test_stdin_to_stdout():
     result = run_terser("-", stdin=SOURCE)
     assert len(result.stdout) < len(SOURCE)
     assert run_py("-c", result.stdout).stdout == "Hello, World\n"
 
 
-@_xfail_single
 def test_file_to_output(example, tmp_path):
     output = tmp_path / "example.min.py"
     assert run_terser(example, "--output", output).stdout == ""
@@ -67,7 +63,6 @@ def test_file_to_output(example, tmp_path):
     assert example.read_text() == SOURCE
 
 
-@_xfail_single
 @_xfail_bool
 @pytest.mark.parametrize("flag", [["--in-place"], ["--in-place", "True"], ["--in-place", "true"]])
 def test_file_in_place(example, flag):

@@ -44,7 +44,11 @@ class DummySpec(ModuleSpec):
 
     @override
     def resolve(self, module: str):
-        raise TypeError("Linking is not supported for single module")
+        # a lone module has no package to resolve relative imports against
+        if module.startswith(".."):
+            raise ImportError(f"Could not resolve module: {module}")
+
+        return module[1:] if module.startswith(".") else module
 
 
 @final

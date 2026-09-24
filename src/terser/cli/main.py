@@ -40,7 +40,7 @@ def main():
     args = _argv()
 
     # for single files
-    if (paths_size := len(args.path)) <= 1 and (not paths_size or os.path.isfile(next(iter(args.path)))):
+    if (paths_size := len(args.path)) <= 1 and (not paths_size or (p := next(iter(args.path))) == STDIN or os.path.isfile(p)):
         if not paths_size or next(iter(args.path)) == STDIN:
             path = "<stdin>"
             source: str = sys.stdin.read()
@@ -52,16 +52,18 @@ def main():
             source = source_
 
         try:
-            local = sorted(preserved_names(path, parse_preserve(args.mangling_options.preserve_locals)))
+            mangling = args.mangling_options
             minified = terser.minify(
                 source,
                 args.transform_options,
                 path,
                 preserve_shebang=args.preserve_shebang,
                 prefer_single_line=args.prefer_single_line,
-                hoist_literals=args.mangling_options.hoist_literals,
-                rename_locals=args.mangling_options.rename_locals,
-                preserve_locals=local,
+                hoist_literals=mangling.hoist_literals,
+                rename_locals=mangling.rename_locals,
+                preserve_locals=sorted(preserved_names(path, parse_preserve(mangling.preserve_locals))),
+                rename_globals=mangling.rename_globals,
+                preserve_globals=sorted(preserved_names(path, parse_preserve(mangling.preserve_globals))),
             )
         except UnbeneficialMinificationError:
             # Use original source when minification isn't beneficial

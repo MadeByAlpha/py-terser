@@ -36,9 +36,10 @@ def renamer(old: str, new: str, flags: int = 0):
     return Rename
 
 
-def chain():
-    # `b -> a` runs before `c -> b`, so `c` needs two passes to become `a`
-    return [renamer("b", "a"), renamer("c", "b")]
+def chain(depth: int = 2):
+    # `b -> a` runs before `c -> b` (and so on), so `c` needs two passes to become `a`
+    letters = "abcdefghij"[:depth + 1]
+    return [renamer(new_name, old_name) for old_name, new_name in zip(letters, letters[1:])]
 
 
 def names(module: ast.Module) -> list[str]:
@@ -84,8 +85,10 @@ def test_max_flags():
 
 
 def test_minify_runs_multiple_passes(monkeypatch):
-    monkeypatch.setattr(transforms, "__transforms__", chain())
-    assert minify("c = 1\nprint(c)", TransformConfig(), rename_locals=False, hoist_literals=False) == "a=1\nprint(a)"
+    # deeper than the number of pipeline stages, so only repeated passes get it to `a`
+    monkeypatch.setattr(transforms, "__transforms__", chain(depth=6))
+    config = TransformConfig(passes=6)
+    assert minify("g = 1\nprint(g)", config, rename_locals=False, hoist_literals=False) == "a=1\nprint(a)"
 
 
 def test_project_transforms_every_module(monkeypatch, tmp_path):
