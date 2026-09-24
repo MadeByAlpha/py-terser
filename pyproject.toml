@@ -69,6 +69,7 @@ hatchling = [
     "hatchling>=1.31.0",
 ]
 dev = [
+    "pytest>=8.4",
     "ruff>=0.15.22",
     "ty>=0.0.61",
 ]
@@ -102,6 +103,11 @@ future-annotations = true
 ignore = [
     "E731",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--import-mode=importlib"]
+pythonpath = ["tests"]
 
 [tool.ty.environment]
 root = ["./src"]

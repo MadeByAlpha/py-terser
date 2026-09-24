@@ -2,7 +2,7 @@
 
 `py-terser` (package `terser`) is a fork of [dflook/python-minifier](https://github.com/dflook/python-minifier), being rewritten to minify across a whole project. Planned to provide hatch build hook along with the CLI. The goal is to add a project-wide pipeline in addition to the original single-file pipeline. Source root is `src/`, package manager is `uv`.
 
-Codebase is in mid-migration (dead imports, commented-out code, `# TEMP` markers, empty stubs) — ignore name errors that appear in the type checker. There is no test suite/framework wired up yet. `test.py` at the root is an ad-hoc manual script for IDE debugging, not a pytest target; do not run or modify it.
+Codebase is in mid-migration (dead imports, commented-out code, `# TEMP` markers, empty stubs) — ignore name errors that appear in the type checker. Tests live in `tests/` (pytest, modeled on upstream's suite): run them with `uv run --all-groups pytest`. `tests/helpers.py` holds the shared helpers (`only()` to enable a single transform, `apply_transform()`, `assert_code()`, subprocess runners for the CLI). Known bugs are marked `xfail(strict=True)`, so fixing one requires removing its marker. `test.py` at the root is an ad-hoc manual script for IDE debugging, not a pytest target; do not run or modify it.
 
 ## Architecture
 
