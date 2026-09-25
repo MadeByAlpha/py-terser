@@ -102,6 +102,18 @@ def test_boolean_option_true(project, tmp_path):
     assert "doubled_value" not in (output / "helper.py").read_text()
 
 
+@pytest.mark.parametrize("option,enabled,disabled", [
+    ("--remove-empty-exc-brackets", "raise ValueError\n", "raise ValueError()"),
+    ("--convert-posargs", "def check(A):", "def check(A,/):"),
+])
+def test_transform_options(tmp_path, option, enabled, disabled):
+    path = tmp_path / "example.py"
+    path.write_text("def check(input_value, /):\n    if not input_value:\n        raise ValueError()\n    return input_value\n")
+
+    assert enabled in run_terser(path).stdout + "\n"
+    assert disabled in run_terser(path, option, "False").stdout
+
+
 def test_optimize(project, tmp_path):
     run_terser(project, "--output", tmp_path / "out", "--optimize", "2")
 

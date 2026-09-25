@@ -128,8 +128,8 @@ multiple values, and can be repeated.
 | `--remove-debug`                 | `True`  | Remove `if __debug__:` blocks                                                 |
 | `--remove-asserts`               | `True`  | Remove `assert` statements                                                    |
 | `--convert-pass`                 | `True`  | Remove `pass`, or replace it with the shortest literal statement (`0`)        |
-| `--remove-empty-exc-brackets`    | `True`  | `raise ValueError()` → `raise ValueError` for built-in exceptions             |
-| `--convert-posargs`              | `True`  | Convert positional-only arguments to normal arguments                        |
+| `--remove-empty-exc-brackets`    | `True`  | `raise ValueError()` → `raise ValueError` for built-in exceptions (not in modules using `exec()`, an external `import *`, …) |
+| `--convert-posargs`              | `True`  | Convert positional-only arguments to normal arguments (not for functions taking `**kwargs`) |
 
 #### Mangling
 

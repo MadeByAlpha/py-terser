@@ -14,7 +14,7 @@ Pipelines live under `terser._pipeline`, consists of these components:
     3. Apply pre-transforms — apply transforms with `FLAGS <= 0`.
     4. Resolve names (`resolver/`) — two phase: `resolver.resolve()` in `resolver.py` walks the AST, binding every name to a `Binding` in its namespace (`ScopedNode`), mirroring CPython scoping rules. `binder/` (in `resolver/binder/__init__.py`, running `resolve_all` → `mark_exports` → `resolve_imports` → `bind`) then figures out `__all__`, module exports, and unresolved import targets (`UnresolvedModuleRef`) *within* a single module, deferring cross-module linking.
     5. Apply module transforms — apply transforms with `FLAGS <= 1`, repeat up to `config.passes` times. `TransformCache.run()` (`transforms/_suite.py`) detects changes by comparing `ast.dump()` before/after each transform, skips a transform when nothing changed since it last ran, and a pass that changes nothing stops the loop. A cache is only valid for one module and one stage: create a new one after anything edits the module outside it (e.g. mangling).
-    6. Module-level mangle — apply mangling for module-level names (locals/nonlocals, `__` prefixed names).
+    6. Module-level mangle — apply mangling for module-level names (locals/nonlocals, `__` prefixed names), then transforms with `FLAGS <= 1` again. `FLAGS == 2` transforms need the module linked, so they only run in the stages after `linker.link` (in `terser.minify` for a single file, and project stage 4).
 - Transformers — per-node rewrite passes, inherits `SuiteTransformer`. Some transformers need bindings already resolved (see `FLAGS`) — check the ordering there before adding a new one.
 - Mangler — name-shortening (rename, hoist literals). Currently disconnected from the new minifier.
 

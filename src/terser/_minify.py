@@ -90,8 +90,9 @@ def minify(
         if rename:
             mangler.mangle_locals(module, rename, preserved_names)
 
-        # mangling changed the module behind the previous cache's back, so start over
-        module = transforms.TransformCache(config).run_passes(module, 2)
+        # mangling changed the module behind the previous cache's back, so start over. FLAGS == 2
+        # transforms need the module linked, which only happens after this function
+        module = transforms.TransformCache(config).run_passes(module, 1)
 
     # FIXME: lineno problem
     # try:
