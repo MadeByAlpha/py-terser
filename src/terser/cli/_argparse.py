@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import typing
 from dataclasses import is_dataclass
@@ -25,7 +27,10 @@ else:
         def __hash__(self) -> int:
             return hash(type(self))
 
-UnionConstructor: Any = UnionType
+def _is_union(annotation: Any) -> bool:
+    # `X | Y` is a types.UnionType, while typing.Union[X, Y] is only a UnionType since Python 3.14
+    return get_origin(annotation) in (typing.Union, UnionType)
+
 LiteralGenericAlias = getattr(typing, "_LiteralGenericAlias")
 
 
@@ -49,16 +54,17 @@ class _ModelArgumentBuilder:
         model_fields: dict[str, FieldInfo] = model.model_fields
         for field, field_info in model_fields.items():
             annotation: type[BaseModel] = field_info.annotation # type: ignore[invalid-type]
-            if MutuallyExclusive in field_info.metadata:
+            if any(isinstance(m, MutuallyExclusive) for m in field_info.metadata):
                 if BaseModel not in annotation.mro() and not is_dataclass(annotation):
                     raise ValueError
 
-                group = self.parser.add_mutually_exclusive_group(required=field_info.is_required())
+                # the group itself is optional: leaving out every option of it means "use the defaults"
+                group = self.parser.add_mutually_exclusive_group(required=False)
                 self.__iter_fields(group, annotation)   # type: ignore[invalid-type]
                 continue
 
             types: list[Any] = [annotation]
-            if isinstance(annotation, UnionType):
+            if _is_union(annotation):
                 types = list(get_args(annotation))
 
             models = set(filter(lambda x: isinstance(x, type(BaseModel)) or is_dataclass(x), types))
@@ -73,7 +79,7 @@ class _ModelArgumentBuilder:
             )
 
             if len(type_params := set(types) - models):
-                annotation = UnionConstructor[tuple(type_params)]
+                annotation = typing.Union[tuple(type_params)]  # noqa: UP007 - built from a runtime tuple
                 self.__add_arg(group, field, field_info, annotation) # type: ignore[invalid-type]
 
             for type_param in models:
@@ -84,17 +90,24 @@ class _ModelArgumentBuilder:
             self.__iter_fields(parser, model)   # type: ignore[invalid-type]
             return
 
-        choices = None
+        if _is_union(model):
+            non_none = [t for t in get_args(model) if t is not type(None)]
+            model = non_none[0] if len(non_none) == 1 else None
+
+        choices, metavar = None, None
+        action, nargs, const = "store", None, None
         if model is bool:
-            choices = [True, False]
+            # `--flag`, `--flag True` and `--flag False` all work
+            choices, metavar, nargs, const = [True, False], "{True,False}", '?', True
+            model = str_to_bool
         elif isinstance(model, LiteralGenericAlias):
             choices = get_args(model)
+            model = type(choices[0])
         elif isinstance(model, EnumType):
             choices = list(model.__members__)
             if not len(choices):
                 choices = None
 
-        action, nargs = "store", None
         if get_origin(model) in (list, set, frozenset, tuple):
             # 'extend' (not 'append') so repeated uses of the flag accumulate into a
             # flat list matching the field's collection type, instead of a list of lists.
@@ -105,22 +118,61 @@ class _ModelArgumentBuilder:
             elem_types = get_args(model)
             model = elem_types[0] if elem_types else str
 
-        if isinstance(model, UnionType):
-            non_none = [t for t in get_args(model) if t is not type(None)]
-            model = non_none[0] if len(non_none) == 1 else None
-
-        default = [] if action == "extend" else field_info.get_default(call_default_factory=True)
+        # an `extend` default would be extended rather than replaced, so collections start out as
+        # None and fall back to the field's default when the option isn't given
+        default = None if action == "extend" else field_info.get_default(call_default_factory=True)
+        kwargs = {"const": const} if const is not None else {}
         parser.add_argument(
             "--" + field.replace('_', '-'),
             action=action,
             nargs=nargs,
             default=default,
+            metavar=metavar,
             type=model, # type: ignore[invalid-type]
             choices=choices,
             required=field_info.is_required(),
             help=field_info.description,
             dest=field,
             deprecated=field_info.deprecated,
+            **kwargs,
         )
+
+_TRUE = frozenset({"true", "1", "yes", "on"})
+_FALSE = frozenset({"false", "0", "no", "off"})
+
+
+def str_to_bool(value: str) -> bool:
+    match value.strip().lower():
+        case v if v in _TRUE:
+            return True
+        case v if v in _FALSE:
+            return False
+    raise argparse.ArgumentTypeError(f"expected True or False, got {value!r}")
+
+
+def normalize_bool_flags(parser: argparse.ArgumentParser, argv: list[str]) -> list[str]:
+    """
+    Give every bare boolean flag an explicit `True`, so a flag directly followed by a positional
+    argument (`--in-place src/`) doesn't take that argument as its value.
+    """
+
+    flags = {
+        option
+        for action in parser._actions if action.type is str_to_bool
+        for option in action.option_strings
+    }
+
+    normalized: list[str] = []
+    for i, arg in enumerate(argv):
+        normalized.append(arg)
+        if arg == "--":
+            normalized.extend(argv[i + 1:])
+            break
+
+        if arg in flags and (i + 1 == len(argv) or argv[i + 1].strip().lower() not in _TRUE | _FALSE):
+            normalized.append("True")
+
+    return normalized
+
 
 arguments_from_model = _ModelArgumentBuilder.from_model

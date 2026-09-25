@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import os
 import shutil
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 import anyio
@@ -26,6 +29,19 @@ if TYPE_CHECKING:
     type Awaitable[T] = Coroutine[Any, Any, T]
 
 
+@asynccontextmanager
+async def _task_group():
+    """A task group that re-raises its only exception by itself, instead of burying it in a group."""
+
+    try:
+        async with anyio.create_task_group() as tg:
+            yield tg
+    except BaseExceptionGroup as group:
+        if len(group.exceptions) == 1:
+            raise group.exceptions[0] from None
+        raise
+
+
 async def _read_async(path: Path, /, *, limiter: CapacityLimiter) -> str:
     # noinspection bad-argument-type
     source_fp = await to_thread.run_sync(path._path.open, 'r', limiter=limiter)
@@ -46,10 +62,14 @@ async def _write_async(path: Path, source: str, /, *, limiter: CapacityLimiter):
     finally:
         await source_io.aclose()
 
-def _module_output_path(spec: _spec.ModuleSpec, new_dotted: dict[str, str]) -> Path:
-    """The relative output path a module should be written to, reflecting its mangled name."""
+def _module_output_path(spec: _spec.ModuleSpec, new_dotted: dict[str, str], strip: int = 0) -> Path:
+    """
+    The relative output path a module should be written to, reflecting its mangled name.
 
-    parts = new_dotted.get(str(spec), str(spec)).split('.')
+    :param strip: Number of leading dotted components that the output directory itself stands for
+    """
+
+    parts = new_dotted.get(str(spec), str(spec)).split('.')[strip:]
     if isinstance(spec, _spec.PackageSpec):
         return Path(*parts, "__init__.py")
     return Path(*parts[:-1], parts[-1] + spec.path.suffix)
@@ -99,6 +119,13 @@ class ProjectMinifier(Pipeline):
         self.prefer_single_line = prefer_single_line
         self.rename_modules = rename_modules
         self.preserve_modules = preserve_modules or set()
+
+        # when a single package directory is given, the output directory stands for that package:
+        # its contents are written straight into it, and the package can't be renamed (since its
+        # directory's name is up to the caller)
+        self.__output_package = path_provider.single_package_root
+        if self.__output_package is not None:
+            self.preserve_modules = self.preserve_modules | {self.__output_package}
         self.entry = entry or set()
 
     @classmethod
@@ -163,18 +190,18 @@ class ProjectMinifier(Pipeline):
             with self.__reporter("Mangling modules"):
                 new_dotted = mangler.mangle_modules(project, self.rename_modules, self.preserve_modules, entry)
 
-            cache = transforms.TransformCache(self.__config)
-            modules_len = len(modules)
+            # whole passes over every module, until a pass changes none of them
+            caches = [transforms.TransformCache(self.__config) for _ in modules]
+            modules_len, changed = len(modules), False
             for j in self.__reporter("Applying transforms", range(self.__config.passes * len(modules))):
                 i = j % modules_len
-                for transform in transforms.__transforms__:
-                    if not transform.is_enabled(self.__config) or transform.FLAGS > 2:
-                        continue
+                modules[i], modified = caches[i].run(modules[i], 2)
+                changed |= modified
 
-                    modules[i] = transform(cache)(modules[i])
-
-                if not i and not any(cache.passes.values()):
-                    break
+                if i == modules_len - 1:
+                    if not changed:
+                        break
+                    changed = False
 
             # for richer progress bar support
             iter_ = iter(self.__reporter("Mangling", range(-1, modules_len)))
@@ -182,11 +209,8 @@ class ProjectMinifier(Pipeline):
             mangler.mangle_globals(project, self.rename_globals, self.preserve_globals)
 
             for i in iter_:
-                for transform in transforms.__transforms__:
-                    if not transform.is_enabled(self.__config) or transform.FLAGS > 4:
-                        continue
-
-                    modules[i] = transform(cache)(modules[i])
+                # global mangling changed the modules, so the caches start over
+                modules[i] = transforms.TransformCache(self.__config).run_passes(modules[i], 4)
 
             await self.__dump_results(modules, project, new_dotted)
 
@@ -208,7 +232,7 @@ class ProjectMinifier(Pipeline):
             modules[i] = module
             task.done()
 
-        async with anyio.create_task_group() as tg:
+        async with _task_group() as tg:
             # TODO: Cleanup this shit
             j = len(self.__module_specs) - 1
             for i, (task, spec) in enumerate(self.__reporter.iter(self.__module_specs, "Compiling modules")):
@@ -256,7 +280,7 @@ class ProjectMinifier(Pipeline):
                 # in-place: write each module back to its own original file
                 dest = spec.path
             else:
-                dest = self.__output / _module_output_path(spec, new_dotted)
+                dest = self.__output / _module_output_path(spec, new_dotted, self.__output_package is not None)
                 await dest.parent.mkdir(parents=True, exist_ok=True)
 
             source = await to_thread.run_sync(unparse, str(spec.path), None, node, self.prefer_single_line)
@@ -273,12 +297,10 @@ class ProjectMinifier(Pipeline):
                 # the containing package was tree-shaken away - no reachable consumer left
                 return
 
-            new_parent = new_dotted.get(parent, parent) if parent else None
-            dest = (
-                self.__output.joinpath(*new_parent.split('.'), ffi_spec.path.name)
-                if new_parent
-                else self.__output / ffi_spec.path.name
-            )
+            new_parent = new_dotted.get(parent, parent).split('.') if parent else []
+            if self.__output_package is not None:
+                new_parent = new_parent[1:]
+            dest = self.__output.joinpath(*new_parent, ffi_spec.path.name)
 
             await dest.parent.mkdir(parents=True, exist_ok=True)
             await to_thread.run_sync(shutil.copy2, str(ffi_spec.path), str(dest))
@@ -292,7 +314,7 @@ class ProjectMinifier(Pipeline):
             return wrapper
 
         tasks = set(map(wrap(module), modules)) | set(map(wrap(binary), self.__ffi_specs))
-        async with anyio.create_task_group() as tg:
+        async with _task_group() as tg:
             j = len(tasks) - 1
             for i, (task, func) in enumerate(self.__reporter.iter(tasks, "Writing output")):
                 # noinspection async-call

@@ -1,6 +1,8 @@
 """
 For each node in an AST set the namespace to use for name binding and resolution
 """
+
+from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from alpha93.commons import typed

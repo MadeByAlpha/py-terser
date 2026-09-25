@@ -1,12 +1,32 @@
-import terser.ast.ast as ast
+from __future__ import annotations
+
+from typing import override
+
+from terser.ast import ast
+
+from ._suite import SuiteTransformer, TransformerFlag
 
 
-def remove_posargs(node):
-    if isinstance(node, ast.arguments) and hasattr(node, 'posonlyargs'):
-        node.args = node.posonlyargs + node.args
-        node.posonlyargs = []
+class ConvertPosargs(SuiteTransformer):
+    """
+    Convert positional-only arguments to normal arguments: `def f(a, /, b)` -> `def f(a, b)`
 
-    for child in ast.iter_child_nodes(node):
-        remove_posargs(child)
+    Runs after mangling, which may rename positional-only arguments since callers can't pass them by
+    keyword. Functions taking `**kwargs` are left alone: there, a keyword argument sharing a
+    positional-only argument's name goes into `kwargs`, and would clash after the conversion.
+    """
+    FLAGS = TransformerFlag.INFLUENCES_MANGLING
 
-    return node
+    @override
+    @classmethod
+    def is_enabled(cls, config, /) -> bool:
+        return config.convert_posargs
+
+    def visit_arguments(self, node: ast.arguments):
+        node = self.generic_visit(node)
+
+        if node.posonlyargs and node.kwarg is None:
+            node.args = node.posonlyargs + node.args
+            node.posonlyargs = []
+
+        return node

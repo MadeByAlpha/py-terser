@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from typing import final, override
 
@@ -17,7 +19,7 @@ class ModuleSpec(ABC):
     @final
     @property
     def name(self) -> str:
-        return self.__namespace.rsplit('.', 1)[1]
+        return self.__namespace.rsplit('.', 1)[-1]
 
     @property
     @abstractmethod
@@ -44,7 +46,11 @@ class DummySpec(ModuleSpec):
 
     @override
     def resolve(self, module: str):
-        raise TypeError("Linking is not supported for single module")
+        # a lone module has no package to resolve relative imports against
+        if module.startswith(".."):
+            raise ImportError(f"Could not resolve module: {module}")
+
+        return module.removeprefix(".")
 
 
 @final
@@ -107,7 +113,7 @@ class PackageSpec(ModuleSpec):
 
     def __init__(self, unresolved: ModuleSpec, parent: PackageSpec | None = None):
         assert str(unresolved).endswith(".__init__")
-        super().__init__(str(unresolved).rstrip(".__init__"))
+        super().__init__(str(unresolved).removesuffix(".__init__"))
         self.__path = unresolved.path.parent
         self.__parent = parent
         self.__children = {}

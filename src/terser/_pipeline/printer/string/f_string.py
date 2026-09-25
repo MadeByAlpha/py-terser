@@ -6,6 +6,8 @@ Mostly because FStrings feel like a hack.
 
 """
 
+from __future__ import annotations
+
 import copy
 import re
 import sys

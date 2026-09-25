@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import IntFlag, auto
@@ -11,7 +13,7 @@ from ..resolver import bind_names, resolve_subtree
 from ..resolver.util import scope_ref_global
 
 if TYPE_CHECKING:
-    from typing import Final, Self
+    from typing import Final
 
     from terser.ast.ref import ContainsScope
     from terser.config import TransformConfig
@@ -27,12 +29,61 @@ class TransformerFlag(IntFlag):
 @final
 @dataclass()
 class TransformCache:
+    """
+    Runs transform passes over one module, tracking which transforms changed it.
+
+    A transform is skipped when the module hasn't changed since it last ran, and a pass that
+    changes nothing means the module reached a fixed point. The state is per module and per
+    pipeline stage: anything that edits the module outside `run()` (e.g. mangling) needs a new
+    cache.
+    """
+
     from dataclasses import field
 
     config: Final[TransformConfig]
 
-    transforms: list[type[SuiteTransformer]] = field(default_factory=list)
+    transforms: list[type[SuiteTransformer]] | None = None
+    """Transforms to run, in order. Defaults to `terser._pipeline.transforms.__transforms__`"""
+
     passes: dict[type[SuiteTransformer], bool] = field(default_factory=dict)
+    """Whether each transform changed the module the last time it ran"""
+
+    _generation: int = 0
+    _last_run: dict[type[SuiteTransformer], int] = field(default_factory=dict)
+
+    def run(self, module: ast.Module, max_flags: int, /) -> tuple[ast.Module, bool]:
+        """Run one pass of the enabled transforms with `FLAGS <= max_flags`. Returns whether it changed anything."""
+
+        if (transform_list := self.transforms) is None:
+            from terser._pipeline import transforms
+            transform_list = transforms.__transforms__
+
+        changed = False
+        for transform in transform_list:
+            if transform.FLAGS > max_flags or not transform.is_enabled(self.config):
+                continue
+            if self._last_run.get(transform) == self._generation:
+                continue  # nothing changed since this transform last ran
+
+            before = ast.dump(module)
+            module = transform(self)(module)
+            self.passes[transform] = modified = ast.dump(module) != before
+
+            if modified:
+                self._generation += 1
+                changed = True
+            self._last_run[transform] = self._generation
+
+        return module, changed
+
+    def run_passes(self, module: ast.Module, max_flags: int, /) -> ast.Module:
+        """Run up to `config.passes` passes, stopping early once a pass changes nothing."""
+
+        for _ in range(self.config.passes):
+            module, changed = self.run(module, max_flags)
+            if not changed:
+                break
+        return module
 
 
 class SuiteTransformer(NodeVisitor, ABC):
@@ -43,30 +94,11 @@ class SuiteTransformer(NodeVisitor, ABC):
 
     _config: Final[TransformConfig]
     _cache: Final[TransformCache | None]
-    _is_node_modified: bool
 
     @classmethod
     @abstractmethod
     def is_enabled(cls, config: TransformConfig, /) -> bool:
         ...
-
-    @final
-    def __new__(cls, ctx: TransformConfig | TransformCache, /) -> Self:
-        if not isinstance(ctx, TransformCache) or cls not in ctx.passes:
-            obj = super().__new__(cls)
-            obj.__init__(ctx)
-            return obj
-
-        assert not set(ctx.transforms).difference(set(ctx.passes.keys()))
-        for i in range(ctx.transforms.index(cls)):
-            if ctx.passes[ctx.transforms[i]]:
-                break
-        else:
-            return lambda _: _  # type: ignore[ty:invalid-return-type]
-
-        obj = super().__new__(cls)
-        obj.__init__(ctx)
-        return obj
 
     @final
     def __call__(self, module: ast.Module, /):
@@ -178,6 +210,27 @@ class SuiteTransformer(NodeVisitor, ABC):
         if node.finalbody:
             node.finalbody = self.suite(node.finalbody, parent=node)
 
+        return node
+
+    def visit_TryStar(self, node: ast.TryStar):
+        return self.visit_Try(node) # type: ignore[ty:invalid-argument-type]
+
+    @override
+    def visit_ExceptHandler(self, node: ast.ExceptHandler):
+        if node.type is not None:
+            node.type = self.visit(node.type)
+
+        node.body = self.suite(node.body, parent=node)
+        return node
+
+    @override
+    def visit_match_case(self, node: ast.match_case):
+        node.pattern = self.visit(node.pattern)
+
+        if node.guard is not None:
+            node.guard = self.visit(node.guard)
+
+        node.body = self.suite(node.body, parent=node)
         return node
 
     @override

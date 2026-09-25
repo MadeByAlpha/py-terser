@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import final, override
 
 from .abc import StepContext
@@ -44,17 +46,20 @@ class _EmptyStepContext(StepContext):
 
 
 @final
+class EmptyTask(Task):
+    """A task that reports nothing, for running a pipeline step outside any reporter."""
+
+    @override
+    def _step_context(self, message: str, /):
+        return _EmptyStepContext()
+
+    @override
+    def done(self, /) -> None:
+        pass
+
+
+@final
 class _EmptyTaskProvider(TaskProvider):
-    @final
-    class EmptyTask(Task):
-        @override
-        def _step_context(self, message: str, /):
-            return _EmptyStepContext()
-
-        @override
-        def done(self, /) -> None:
-            pass
-
     @override
     def __enter__(self) -> None:
         pass
@@ -66,4 +71,4 @@ class _EmptyTaskProvider(TaskProvider):
     @override
     def _task(self):
         # noinspection argument-list
-        return _EmptyTaskProvider.EmptyTask()
+        return EmptyTask()

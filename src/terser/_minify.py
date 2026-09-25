@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 from ._pipeline import preprocessor, parser, resolver, transforms, mangler
@@ -77,13 +79,8 @@ def minify(
 
     cache = transforms.TransformCache(config)
     for _ in task("Applying transforms", range(config.passes)):
-        for transform in transforms.__transforms__:
-            if not transform.is_enabled(config) or transform.FLAGS > 1:
-                continue
-
-            module: ast.Module = transform(cache)(module)
-
-        if not any(cache.passes.values()):
+        module, changed = cache.run(module, 1)
+        if not changed:
             break
 
     with task("Mangling"):
@@ -93,11 +90,9 @@ def minify(
         if rename:
             mangler.mangle_locals(module, rename, preserved_names)
 
-        for transform in transforms.__transforms__:
-            if not transform.is_enabled(config) or transform.FLAGS > 2:
-                continue
-
-            module: ast.Module = transform(config)(module)
+        # mangling changed the module behind the previous cache's back, so start over. FLAGS == 2
+        # transforms need the module linked, which only happens after this function
+        module = transforms.TransformCache(config).run_passes(module, 1)
 
     # FIXME: lineno problem
     # try:

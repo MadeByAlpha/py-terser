@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from abc import ABC
 
 if __debug__ and __import__("typing").TYPE_CHECKING:

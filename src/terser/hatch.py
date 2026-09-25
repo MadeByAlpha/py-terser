@@ -1,16 +1,23 @@
+from __future__ import annotations
+
 import asyncio
-from anyio import Path
+import shutil
+import tempfile
+from pathlib import Path
 from typing import Any
 
+import anyio
 import pathspec
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
-from .config import TransformConfig
+from .config import RemoveAnnotationOptions, TransformConfig
 from .terser import minify_project
 
 
 class TerserBuildHook(BuildHookInterface):
     PLUGIN_NAME = "terser"
+
+    _out_dir: Path | None = None
 
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
         if self.target_name == "sdist":
@@ -36,32 +43,21 @@ class TerserBuildHook(BuildHookInterface):
         if not roots:
             return
 
-        config_opts = self.config.get("config", {})
-        config = TransformConfig(
-            passes=config_opts.get("passes", 5),
-            apply_contracts=config_opts.get("apply_contracts", True),
-            remove_literal_statements=config_opts.get("remove_literal_statements", False),
-            combine_imports=config_opts.get("combine_imports", True),
-            remove_annotations=config_opts.get("remove_annotations", True),
-            remove_explicit_base=config_opts.get("remove_explicit_base", True),
-            remove_explicit_return_none=config_opts.get("remove_explicit_return_none", True),
-            fold_constants=config_opts.get("fold_constants", True),
-            remove_debug=config_opts.get("remove_debug", True),
-            remove_asserts=config_opts.get("remove_asserts", True),
-            convert_pass=config_opts.get("convert_pass", True),
-            remove_empty_exc_brackets=config_opts.get("remove_empty_exc_brackets", True),
-            convert_posargs=config_opts.get("convert_posargs", True),
-        )
+        config_opts = dict(self.config.get("config", {}))
+        if isinstance(remove_annotations := config_opts.get("remove_annotations"), dict):
+            config_opts["remove_annotations"] = RemoveAnnotationOptions(**remove_annotations)
+        config = TransformConfig(**config_opts)
 
-        out_dir = Path(self.directory) / ".terser_build"
-        out_dir._path.mkdir(parents=True, exist_ok=True)
+        # outside the build's output directory, and removed again in finalize()
+        out_dir = Path(tempfile.mkdtemp(prefix="terser-build-"))
+        self._out_dir = out_dir
 
         asyncio.run(
             minify_project(
                 config,
                 roots,
                 reporter=None,
-                output=out_dir,
+                output=anyio.Path(out_dir),
                 hoist_literals=self.config.get("hoist_literals", True),
                 rename_locals=self.config.get("rename_locals", True),
                 preserve_locals=self.config.get("preserve_locals"),
@@ -77,7 +73,7 @@ class TerserBuildHook(BuildHookInterface):
         exclude_patterns = []
         for f in py_files:
             minified_path = out_dir / f.distribution_path
-            if minified_path.exists():
+            if minified_path.is_file():
                 force_include[str(minified_path)] = f.distribution_path
                 exclude_patterns.append("/" + f.relative_path)
 
@@ -89,3 +85,8 @@ class TerserBuildHook(BuildHookInterface):
                 if existing_spec is not None
                 else new_spec
             )
+
+    def finalize(self, version: str, build_data: dict[str, Any], artifact_path: str) -> None:
+        if self._out_dir is not None:
+            shutil.rmtree(self._out_dir, ignore_errors=True)
+            self._out_dir = None

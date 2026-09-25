@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import os
 import sys
@@ -6,41 +8,41 @@ import terser
 
 from .._pipeline.mangler.util import preserved_names
 from ..exceptions import UnbeneficialMinificationError
-from ._argparse import arguments_from_model
+from ._argparse import arguments_from_model, normalize_bool_flags
 from ._argv import TerserArguments, TerserParsedArguments, parse_preserve
 from ._tqdm import TqdmReporter
 
 STDIN = '-'
 
-def main():
+def main(argv: list[str] | None = None):
     """
     examples:
       # Minifying stdin to stdout
-      pyminify -
+      terser -
 
       # Minifying a file to stdout
-      pyminify example.py
+      terser example.py
 
       # Minifying a file and writing to a different file
-      pyminify example.py --output example.min.py
+      terser example.py --output example.min.py
 
       # Minifying a file in place
-      pyminify example.py --in-place
+      terser example.py --in-place
 
       # Minifying all *.py files in a directory
-      pyminify src/ --in-place
+      terser src/ --in-place
 
       # Minifying a directory to a separate output directory
-      pyminify src/ --output build/
+      terser src/ --output build/
 
       # Minifying multiple paths in place
-      pyminify file1.py file2.py src/ --in-place
+      terser file1.py file2.py src/ --in-place
     """
 
-    args = _argv()
+    args = _argv(argv)
 
     # for single files
-    if (paths_size := len(args.path)) <= 1 and (not paths_size or os.path.isfile(next(iter(args.path)))):
+    if (paths_size := len(args.path)) <= 1 and (not paths_size or (p := next(iter(args.path))) == STDIN or os.path.isfile(p)):
         if not paths_size or next(iter(args.path)) == STDIN:
             path = "<stdin>"
             source: str = sys.stdin.read()
@@ -52,23 +54,25 @@ def main():
             source = source_
 
         try:
-            local = sorted(preserved_names(path, parse_preserve(args.mangling_options.preserve_locals)))
+            mangling = args.mangling_options
             minified = terser.minify(
                 source,
                 args.transform_options,
                 path,
                 preserve_shebang=args.preserve_shebang,
                 prefer_single_line=args.prefer_single_line,
-                hoist_literals=args.mangling_options.hoist_literals,
-                rename_locals=args.mangling_options.rename_locals,
-                preserve_locals=local,
+                hoist_literals=mangling.hoist_literals,
+                rename_locals=mangling.rename_locals,
+                preserve_locals=sorted(preserved_names(path, parse_preserve(mangling.preserve_locals))),
+                rename_globals=mangling.rename_globals,
+                preserve_globals=sorted(preserved_names(path, parse_preserve(mangling.preserve_globals))),
             )
         except UnbeneficialMinificationError:
             # Use original source when minification isn't beneficial
             minified = source
 
-        if args.output_options.output:
-            with open(args.output_options.output, 'w') as f:
+        if destination := args.output_options.output or (args.output_options.in_place and path):
+            with open(destination, 'w') as f:
                 f.write(minified)
         else:
             sys.stdout.write(minified)
@@ -98,7 +102,7 @@ def main():
     return
 
 
-def _argv() -> TerserParsedArguments:
+def _argv(argv: list[str] | None = None) -> TerserParsedArguments:
     python_minifier = __import__("terser")
     parser = argparse.ArgumentParser("terser", None, python_minifier.__doc__, main.__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     #parser.add_argument("--help", "-h", action="help")
@@ -112,7 +116,7 @@ def _argv() -> TerserParsedArguments:
     )
 
     arguments_from_model(parser, TerserArguments)
-    args = TerserParsedArguments.from_argparse(parser.parse_args())
+    args = TerserParsedArguments.from_argparse(parser.parse_args(normalize_bool_flags(parser, sys.argv[1:] if argv is None else argv)))
 
     # Handle some invalid argument combinations
     if '-' in args.path and len(args.path) != 1:

@@ -8,69 +8,34 @@ When printed, this essentially removes the brackets from the exception name.
 We can't generally know if a name refers to an exception, so we only do this for builtin exceptions
 """
 
+from __future__ import annotations
+
+from typing import override
+
 from terser.ast import ast, ref
+
 from ..resolver.binding import BuiltinBinding
+from ._suite import SuiteTransformer, TransformerFlag
 
-
-# These are always exceptions, in every version of python
-builtin_exceptions = [
+# Builtin exceptions in every supported Python version (3.13+)
+builtin_exceptions = frozenset({
     'SyntaxError', 'Exception', 'ValueError', 'BaseException', 'MemoryError', 'RuntimeError', 'DeprecationWarning', 'UnicodeEncodeError', 'KeyError', 'LookupError', 'TypeError', 'BufferError',
     'ImportError', 'OSError', 'StopIteration', 'ArithmeticError', 'UserWarning', 'PendingDeprecationWarning', 'RuntimeWarning', 'IndentationError', 'UnicodeTranslateError', 'UnboundLocalError',
     'AttributeError', 'EOFError', 'UnicodeWarning', 'BytesWarning', 'NameError', 'IndexError', 'TabError', 'SystemError', 'OverflowError', 'FutureWarning', 'SystemExit', 'Warning',
     'FloatingPointError', 'ReferenceError', 'UnicodeError', 'AssertionError', 'SyntaxWarning', 'UnicodeDecodeError', 'GeneratorExit', 'ImportWarning', 'KeyboardInterrupt', 'ZeroDivisionError',
-    'NotImplementedError'
-]
-
-# These are exceptions only in python 2.7
-builtin_exceptions_2_7 = [
-    'IOError',
-    'StandardError',
-    'EnvironmentError',
-    'VMSError',
-    'WindowsError'
-]
-
-# These are exceptions in 3.3+
-builtin_exceptions_3_3 = [
-    'ChildProcessError',
-    'ConnectionError',
-    'BrokenPipeError',
-    'ConnectionAbortedError',
-    'ConnectionRefusedError',
-    'ConnectionResetError',
-    'FileExistsError',
-    'FileNotFoundError',
-    'InterruptedError',
-    'IsADirectoryError',
-    'NotADirectoryError',
-    'PermissionError',
-    'ProcessLookupError',
-    'TimeoutError',
-    'ResourceWarning',
-]
-
-# These are exceptions in 3.5+
-builtin_exceptions_3_5 = [
-    'StopAsyncIteration',
-    'RecursionError',
-]
-
-# These are exceptions in 3.6+
-builtin_exceptions_3_6 = [
-    'ModuleNotFoundError'
-]
-
-# These are exceptions in 3.10+
-builtin_exceptions_3_10 = [
-    'EncodingWarning'
-]
-
-# These are exceptions in 3.11+
-builtin_exceptions_3_11 = [
-    'BaseExceptionGroup',
-    'ExceptionGroup',
-    'BaseExceptionGroup',
-]
+    'NotImplementedError',
+    # 3.3+
+    'ChildProcessError', 'ConnectionError', 'BrokenPipeError', 'ConnectionAbortedError', 'ConnectionRefusedError', 'ConnectionResetError', 'FileExistsError', 'FileNotFoundError',
+    'InterruptedError', 'IsADirectoryError', 'NotADirectoryError', 'PermissionError', 'ProcessLookupError', 'TimeoutError', 'ResourceWarning',
+    # 3.5+
+    'StopAsyncIteration', 'RecursionError',
+    # 3.6+
+    'ModuleNotFoundError',
+    # 3.10+
+    'EncodingWarning',
+    # 3.11+
+    'BaseExceptionGroup', 'ExceptionGroup',
+})
 
 
 def _remove_empty_call(binding: BuiltinBinding):
@@ -101,18 +66,28 @@ def _remove_empty_call(binding: BuiltinBinding):
         ref(name_node).parent = raise_node
 
 
-def remove_no_arg_exception_call(module):
-    assert isinstance(module, ast.Module)
+class RemoveExceptionBrackets(SuiteTransformer):
+    """
+    Remove the brackets of builtin exceptions raised without arguments: `raise ValueError()` -> `raise ValueError`
 
-    for binding in module.bindings:
-        if not isinstance(binding, BuiltinBinding):
-            continue
+    Needs the module linked, since a `from x import *` may provide a name that otherwise looks like a builtin.
+    """
+    FLAGS = TransformerFlag.REQUIRES_MODULE_RESOLVE
 
-        if binding.is_redefined():
-            continue
+    @override
+    @classmethod
+    def is_enabled(cls, config, /) -> bool:
+        return config.remove_empty_exc_brackets
 
-        if binding.name in builtin_exceptions:
-            # We can remove any calls to builtin exceptions
-            _remove_empty_call(binding)
+    @override
+    def visit_Module(self, node: ast.Module):
+        module_ref = ref(node)
+        if module_ref.tainted:
+            # exec(), an external wildcard import, ... - any builtin name could be redefined
+            return node
 
-    return module
+        for binding in module_ref.bindings:
+            if isinstance(binding, BuiltinBinding) and not binding.is_redefined() and binding.name in builtin_exceptions:
+                _remove_empty_call(binding)
+
+        return node

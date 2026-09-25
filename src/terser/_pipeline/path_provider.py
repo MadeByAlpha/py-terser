@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections.abc import MutableSet
 from typing import TYPE_CHECKING, final, override
 
@@ -21,7 +23,7 @@ class UnresolvedModule(spec.ModuleSpec):
     __path: Final[Path]
 
     def __init__(self, root: _SourceRoot, path: Path):
-        super().__init__(str(path.relative_to(root.path).with_suffix("")).replace(path.parser.sep, '.'))
+        super().__init__(str(path.relative_to(root.base).with_suffix("")).replace(path.parser.sep, '.'))
         self.__path = path
 
     @override
@@ -46,7 +48,7 @@ class UnresolvedFfiModule(spec.ModuleSpec):
 
     def __init__(self, root: _SourceRoot, path: Path):
         stem = path.name.split('.', 1)[0]
-        parts = path.parent.relative_to(root.path).parts
+        parts = path.parent.relative_to(root.base).parts
         super().__init__('.'.join((*parts, stem)) if parts else stem)
         self.__path = path
 
@@ -62,18 +64,29 @@ class UnresolvedFfiModule(spec.ModuleSpec):
 class _SourceRoot:
     __resolver: Final[_SpecResolver]
     __path: Final[Path]
+    __base: Final[Path]
 
     __unresolved: dict[str, UnresolvedModule | UnresolvedFfiModule]
 
     @property
     def path(self):
+        """The directory that is walked for modules."""
         return self.__path
 
-    def __init__(self, resolver: _SpecResolver, source: Path):
+    @property
+    def base(self):
+        """
+        The directory dotted module paths are relative to: the parent of `path` when `path` is
+        itself a package (so its modules are named `pkg.x`, not `x`), otherwise `path` itself.
+        """
+        return self.__base
+
+    def __init__(self, resolver: _SpecResolver, source: Path, base: Path | None = None):
         assert source.is_absolute(), "Path is not resolved yet (not an absolute path)"
 
         self.__resolver = resolver
         self.__path = source
+        self.__base = base or source
         self.__unresolved = {}
 
     def register(self, path: Path):
@@ -167,8 +180,8 @@ class _SpecResolver:
     def __getitem__(self, source: Path):
         return self.__sources[str(source)]
 
-    def register(self, source: Path):
-        self.__sources[str(source)] = _SourceRoot(self, source)
+    def register(self, source: Path, base: Path | None = None):
+        self.__sources[str(source)] = _SourceRoot(self, source, base)
 
     def align(self):
         for root in self.__sources.values():
@@ -183,6 +196,8 @@ class PathProvider(MutableSet[str]):
     __specs: dict[str, spec.ModuleSpec]
     __iter: set[spec.ModuleSpec]
     __roots: set[Path]
+    __package_roots: dict[str, Path]
+    __input_count: int
 
     def __init__(self, paths: set[str]):
         self.__specs = {}
@@ -190,6 +205,8 @@ class PathProvider(MutableSet[str]):
         self.__queue = set() | paths
         self.__discarded = set()
         self.__roots = set()
+        self.__package_roots = {}
+        self.__input_count = len(paths)
 
     @property
     def specs(self):
@@ -199,6 +216,18 @@ class PathProvider(MutableSet[str]):
     def roots(self) -> set[Path]:
         """Resolved absolute directory roots that were walked to build the specs."""
         return self.__roots
+
+    @property
+    def package_roots(self) -> dict[str, Path]:
+        """Directories given directly that are packages themselves, keyed by their dotted path."""
+        return self.__package_roots
+
+    @property
+    def single_package_root(self) -> str | None:
+        """The dotted path of the package, if exactly one path was given and it's a package directory."""
+        if self.__input_count == 1 and len(self.__package_roots) == 1:
+            return next(iter(self.__package_roots))
+        return None
 
     @property
     def is_resolved(self) -> bool:
@@ -233,7 +262,11 @@ class PathProvider(MutableSet[str]):
                 ns(path)
                 continue
 
-            ns.register(path)
+            if await (path / "__init__.py").is_file():
+                ns.register(path, base=path.parent)
+                self.__package_roots[path.name] = path
+            else:
+                ns.register(path)
             self.__roots.add(path)
             async for root, _, children in path.walk(follow_symlinks=not strict):
                 for child in children:

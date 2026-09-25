@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import TYPE_CHECKING, ClassVar, override
 
 from terser.ast.ast import AST as Node, iter_child_nodes
