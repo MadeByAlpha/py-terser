@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import csv
+import hashlib
+import io
+import os
 import shutil
 import tempfile
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +19,13 @@ from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 from .config import RemoveAnnotationOptions, TransformConfig
 from .terser import minify_project
 
+# Targets whose final set of files is only known once the artifact is built: `rollup` (rollup-py)
+# vendors dependencies from its own hook, which always runs after every other hook's `initialize()`.
+# Their wheels are minified in `finalize()` instead, vendored files included.
+POSTPROCESS_TARGETS = frozenset({"rollup"})
+
+_SOURCE_SUFFIXES = (".py", ".pyw")
+
 
 class TerserBuildHook(BuildHookInterface):
     PLUGIN_NAME = "terser"
@@ -20,14 +33,11 @@ class TerserBuildHook(BuildHookInterface):
     _out_dir: Path | None = None
 
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
-        if self.target_name == "sdist":
+        if self.target_name == "sdist" or self.target_name in POSTPROCESS_TARGETS:
             return
 
         included_files = list(self.build_config.builder.recurse_included_files())
-        py_files = [
-            f for f in included_files
-            if f.path.endswith(".py") or f.path.endswith(".pyw")
-        ]
+        py_files = [f for f in included_files if f.path.endswith(_SOURCE_SUFFIXES)]
         if not py_files:
             return
 
@@ -43,28 +53,10 @@ class TerserBuildHook(BuildHookInterface):
         if not roots:
             return
 
-        config_opts = dict(self.config.get("config", {}))
-        if isinstance(remove_annotations := config_opts.get("remove_annotations"), dict):
-            config_opts["remove_annotations"] = RemoveAnnotationOptions(**remove_annotations)
-        config = TransformConfig(**config_opts)
-
         # outside the build's output directory, and removed again in finalize()
         out_dir = Path(tempfile.mkdtemp(prefix="terser-build-"))
         self._out_dir = out_dir
-
-        asyncio.run(
-            minify_project(
-                config,
-                roots,
-                reporter=None,
-                output=anyio.Path(out_dir),
-                hoist_literals=self.config.get("hoist_literals", True),
-                rename_locals=self.config.get("rename_locals", True),
-                preserve_locals=self.config.get("preserve_locals"),
-                rename_globals=self.config.get("rename_globals", False),
-                preserve_globals=self.config.get("preserve_globals"),
-            )
-        )
+        self._minify(roots, out_dir)
 
         # Minified files are added via force_include; the originals must be excluded
         # from the normal package walk, or the wheel builder rejects the duplicate
@@ -90,3 +82,95 @@ class TerserBuildHook(BuildHookInterface):
         if self._out_dir is not None:
             shutil.rmtree(self._out_dir, ignore_errors=True)
             self._out_dir = None
+
+        if self.target_name in POSTPROCESS_TARGETS and artifact_path.endswith(".whl"):
+            self._minify_wheel(artifact_path)
+
+    def _minify(self, roots: set[str], out_dir: Path) -> None:
+        config_opts = dict(self.config.get("config", {}))
+        if isinstance(remove_annotations := config_opts.get("remove_annotations"), dict):
+            config_opts["remove_annotations"] = RemoveAnnotationOptions(**remove_annotations)
+        config = TransformConfig(**config_opts)
+
+        asyncio.run(
+            minify_project(
+                config,
+                roots,
+                reporter=None,
+                output=anyio.Path(out_dir),
+                hoist_literals=self.config.get("hoist_literals", True),
+                rename_locals=self.config.get("rename_locals", True),
+                preserve_locals=self.config.get("preserve_locals"),
+                rename_globals=self.config.get("rename_globals", False),
+                preserve_globals=self.config.get("preserve_globals"),
+            )
+        )
+
+    def _minify_wheel(self, path: str) -> None:
+        """Minify every module of a built wheel in place (as one project), and rewrite its `RECORD`."""
+
+        with zipfile.ZipFile(path) as wheel:
+            infos = wheel.infolist()
+            record_name = next(
+                info.filename for info in infos
+                if info.filename.count("/") == 1 and info.filename.endswith(".dist-info/RECORD")
+            )
+            dist_info = record_name.partition("/")[0]
+            data_dir = dist_info.removesuffix(".dist-info") + ".data"
+
+            # only what lands in site-packages: scripts and data files are left alone
+            sources = [
+                info for info in infos
+                if info.filename.endswith(_SOURCE_SUFFIXES)
+                and info.filename.partition("/")[0] not in (dist_info, data_dir)
+            ]
+            if not sources:
+                return
+
+            with tempfile.TemporaryDirectory(prefix="terser-build-") as tmp:
+                src_dir, out_dir = Path(tmp, "src"), Path(tmp, "out")
+                for info in sources:
+                    wheel.extract(info, src_dir)
+
+                self._minify({str(src_dir)}, out_dir)
+
+                minified = {
+                    info.filename: (out_dir / info.filename).read_bytes()
+                    for info in sources
+                    if (out_dir / info.filename).is_file()
+                }
+
+            records = list(csv.reader(io.StringIO(wheel.read(record_name).decode())))
+            for row in records:
+                if (data := minified.get(row[0])) is not None:
+                    digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
+                    row[1:3] = f"sha256={digest}", str(len(data))
+
+            record = io.StringIO()
+            csv.writer(record, delimiter=",", quotechar='"', lineterminator="\n").writerows(records)
+
+            fd, tmp_path = tempfile.mkstemp(prefix=".terser-", suffix=".whl", dir=os.path.dirname(path))
+            try:
+                with os.fdopen(fd, "wb") as fp, zipfile.ZipFile(fp, "w") as out:
+                    for info in infos:
+                        if info.filename == record_name:
+                            data = record.getvalue().encode()
+                        elif (data := minified.get(info.filename)) is None:
+                            data = wheel.read(info)
+                        out.writestr(_copy_info(info), data)
+            except BaseException:
+                os.unlink(tmp_path)
+                raise
+
+        os.chmod(tmp_path, os.stat(path).st_mode)
+        os.replace(tmp_path, path)
+
+
+def _copy_info(info: zipfile.ZipInfo) -> zipfile.ZipInfo:
+    """A fresh entry with `info`'s name, timestamp, permissions and compression, for other contents."""
+
+    copy = zipfile.ZipInfo(info.filename, info.date_time)
+    copy.external_attr = info.external_attr
+    copy.create_system = info.create_system
+    copy.compress_type = info.compress_type
+    return copy

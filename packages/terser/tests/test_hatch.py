@@ -1,8 +1,13 @@
+import base64
+import csv
+import hashlib
+import io
 import zipfile
 
 import pytest
-
 from helpers import run_py, write_tree
+
+from terser.hatch import TerserBuildHook
 
 PYPROJECT = """\
 [build-system]
@@ -71,4 +76,112 @@ def test_no_warnings(wheel):
 
 def test_output_directory_is_clean(wheel):
     _, dist, path = wheel
+    assert list(dist.iterdir()) == [path]
+
+
+# `rollup` (rollup-py) adds vendored packages from its own hook, which always runs after this one's
+# `initialize()`; they are emulated here with `force-include`, and the hook is run on the built wheel
+# the way that target runs it.
+ROLLUP_PYPROJECT = """\
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "demo"
+version = "0.0.1"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/demo"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"vendor/helper" = "helper"
+
+[tool.hatch.build.targets.wheel.shared-scripts]
+"scripts/tool.py" = "tool.py"
+"""
+
+ROLLUP_SOURCES = {
+    "src/demo/__init__.py": "from demo.math import add_numbers\n\n__all__ = ['add_numbers']\n",
+    "src/demo/math.py": (
+        "from helper import double_it\n\n\n"
+        "def add_numbers(first_number, second_number):\n"
+        "    result_value = double_it(first_number) + second_number\n"
+        "    return result_value\n"
+    ),
+    "vendor/helper/__init__.py": (
+        "def double_it(some_number):\n"
+        "    doubled_number = some_number * 2\n"
+        "    return doubled_number\n"
+    ),
+    "vendor/helper/data.txt": "keep   me\n",
+    "scripts/tool.py": "some_script_variable = 1\n",
+}
+
+
+def _record_is_valid(whl: zipfile.ZipFile) -> bool:
+    [record] = [name for name in whl.namelist() if name.endswith(".dist-info/RECORD")]
+    rows = {row[0]: row[1:] for row in csv.reader(io.StringIO(whl.read(record).decode()))}
+    if set(rows) != set(whl.namelist()):
+        return False
+
+    for name, (digest, size) in rows.items():
+        if name == record:
+            continue
+        data = whl.read(name)
+        expected = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
+        if digest != f"sha256={expected}" or int(size) != len(data):
+            return False
+    return True
+
+
+@pytest.fixture
+def rollup_wheel(tmp_path):
+    project = write_tree(tmp_path / "demo", {"pyproject.toml": ROLLUP_PYPROJECT, **ROLLUP_SOURCES})
+    run_py("-m", "hatchling", "build", "-t", "wheel", "-d", "dist", cwd=project)
+    dist = project / "dist"
+    path = next(dist.glob("*.whl"))
+
+    hook = TerserBuildHook(str(project), {}, None, None, str(dist), "rollup")
+    build_data = {}
+    hook.initialize("standard", build_data)
+    assert build_data == {}  # nothing to do before the vendored files exist
+    hook.finalize("standard", build_data, str(path))
+    return dist, path
+
+
+def test_rollup_vendored_sources_are_minified(rollup_wheel):
+    _, path = rollup_wheel
+    with zipfile.ZipFile(path) as whl:
+        sources = {name: whl.read(name).decode() for name in whl.namelist() if name.endswith(".py")}
+
+    assert "result_value" not in sources["demo/math.py"]
+    assert "doubled_number" not in sources["helper/__init__.py"]
+    assert len(sources["helper/__init__.py"]) < len(ROLLUP_SOURCES["vendor/helper/__init__.py"])
+
+
+def test_rollup_other_files_are_untouched(rollup_wheel):
+    _, path = rollup_wheel
+    with zipfile.ZipFile(path) as whl:
+        assert whl.read("helper/data.txt").decode() == ROLLUP_SOURCES["vendor/helper/data.txt"]
+        [script] = [name for name in whl.namelist() if name.endswith(".data/scripts/tool.py")]
+        assert whl.read(script).decode() == ROLLUP_SOURCES["scripts/tool.py"]
+
+
+def test_rollup_record_is_valid(rollup_wheel):
+    _, path = rollup_wheel
+    with zipfile.ZipFile(path) as whl:
+        assert whl.testzip() is None
+        assert _record_is_valid(whl)
+        assert whl.namelist()[-1].endswith(".dist-info/RECORD")
+
+
+def test_rollup_wheel_works(rollup_wheel):
+    _, path = rollup_wheel
+    code = "from demo import add_numbers; print(add_numbers(20, 2))"
+    assert run_py("-c", code, env={"PYTHONPATH": str(path)}).stdout == "42\n"
+
+
+def test_rollup_output_directory_is_clean(rollup_wheel):
+    dist, path = rollup_wheel
     assert list(dist.iterdir()) == [path]
