@@ -6,9 +6,9 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 import anyio
-from anyio import AsyncFile, CapacityLimiter, Path, to_thread
+from anyio import CapacityLimiter, Path, to_thread
 
-from alpha93.progression import HeadlessReporter
+from alpha93.progression import NullReporter
 
 from ._minify import minify, unparse
 from ._pipeline import PathProvider, Pipeline, linker, mangler, transforms, tree_shake
@@ -18,15 +18,12 @@ from .ast.ref import spec as _spec
 
 if TYPE_CHECKING:
     import ast
-    from collections.abc import Callable, Coroutine
-    from typing import Any
+    from collections.abc import Callable
 
-    from alpha93.progression import BaseReporter, Task
+    from alpha93.progression import Reporter
     from terser.ast.ref import ModuleRef, ModuleSpec
 
     from .config import TransformConfig
-
-    type Awaitable[T] = Coroutine[Any, Any, T]
 
 
 @asynccontextmanager
@@ -42,25 +39,16 @@ async def _task_group():
         raise
 
 
-async def _read_async(path: Path, /, *, limiter: CapacityLimiter) -> str:
-    # noinspection bad-argument-type
-    source_fp = await to_thread.run_sync(path._path.open, 'r', limiter=limiter)
-    source_io = AsyncFile(source_fp, limiter=limiter)
-    try:
-        # noinspection bad-return
-        return await source_io.read()
-    finally:
-        await source_io.aclose()
+def _read(path: os.PathLike[str], /) -> str:
+    with open(path) as fp:
+        return fp.read()
 
-async def _write_async(path: Path, source: str, /, *, limiter: CapacityLimiter):
-    # noinspection bad-argument-type
-    source_fp = await to_thread.run_sync(path._path.open, 'w', limiter=limiter)
-    source_io = AsyncFile(source_fp, limiter=limiter)
-    try:
-        # noinspection bad-argument-type
-        await source_io.write(source)
-    finally:
-        await source_io.aclose()
+
+def _write(path: os.PathLike[str], source: str, /) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w') as fp:
+        fp.write(source)
+
 
 def _module_output_path(spec: _spec.ModuleSpec, new_dotted: dict[str, str], strip: int = 0) -> Path:
     """
@@ -76,12 +64,15 @@ def _module_output_path(spec: _spec.ModuleSpec, new_dotted: dict[str, str], stri
 
 
 class ProjectMinifier(Pipeline):
+    # how many stages `minify()` reports
+    STAGES = 9
+
     def __init__(
         self,
         path_provider: PathProvider,
         config: TransformConfig,
         /,
-        reporter: BaseReporter,
+        reporter: Reporter,
         output: Path | None = None,
         workers: int | None = None,
         *,
@@ -134,91 +125,79 @@ class ProjectMinifier(Pipeline):
         config: TransformConfig,
         paths: set[str],
         /,
-        reporter: BaseReporter | None = None,
+        reporter: Reporter | None = None,
         output: Path | None = None,
         *args,
         **kwargs
     ):
-        # noinspection argument-list,bad-assignment
-        reporter: BaseReporter = reporter or HeadlessReporter()
+        """
+        Minify the modules under `paths` as one project.
+
+        :param reporter: Receives the progress of every stage; closing it is up to the caller
+        :param workers: Most threads to run at once (and so to create), for all the work done in
+            threads: reading, compiling and writing modules, and copying FFI binaries
+        :return: Where each module and FFI binary of the project went: its source path to its
+            output path, or to None when tree-shaking dropped it
+        """
+
+        reporter = reporter or NullReporter()
+        reporter.plan(cls.STAGES)
 
         if len(paths) > 1 and not output:
             raise ValueError("Multiple paths are given, but no output path specified")
 
-        with reporter.prepare("Resolving paths"):
+        # resolving paths awaits one file system call at a time, so it takes one thread at most
+        with reporter.stage("Resolving paths"):
             pp = PathProvider(paths)
             await pp.resolve()
 
-        await cls(pp, config, reporter, output, *args, **kwargs)()
+        return await cls(pp, config, reporter, output, *args, **kwargs)()
 
-    async def __call__(self, /):
-        with self.__reporter.prepare("Calculating task graph"):
-            from terser.utils.cli_helper import TqdmDebugTaskGraph
-            m, f = len(self.__module_specs), len(self.__ffi_specs)
+    async def __call__(self, /) -> dict[str, str | None]:
+        reporter = self.__reporter
+        modules, project = await self.__minify_modules()
 
-            tg = TqdmDebugTaskGraph(
-                TqdmDebugTaskGraph.Task(m,
-                    TqdmDebugTaskGraph.Step(),
-                    TqdmDebugTaskGraph.Step(),
-                    TqdmDebugTaskGraph.Step(),
-                    TqdmDebugTaskGraph.IterableStep(self.__config.passes),
-                    TqdmDebugTaskGraph.Step(),
-                ),
-                TqdmDebugTaskGraph.IterableStep(m),
-                TqdmDebugTaskGraph.Step(),
-                TqdmDebugTaskGraph.Step(),
-                TqdmDebugTaskGraph.IterableStep(m * self.__config.passes),
-                TqdmDebugTaskGraph.IterableStep(m + 1),
-                TqdmDebugTaskGraph.Task(m + f),
-            )
-            del TqdmDebugTaskGraph, m, f
-
-        with self.__reporter as reporter:
-            reporter.init(task_graph=tg)
-            del tg
-
-            modules, project = await self.__minify_modules()
-
-            for module in self.__reporter("Linking", modules):
+        with reporter.stage("Linking", len(modules)) as stage:
+            for module in stage.iter(modules):
                 linker.link(module, project)
 
-            with self.__reporter("Tree-shaking"):
-                entry = await self.__resolve_entry(project)
-                project = tree_shake.shake(project, entry)
-                modules = [module_ref.ast for module_ref in project.values()]
+        with reporter.stage("Tree-shaking"):
+            entry = await self.__resolve_entry(project)
+            project = tree_shake.shake(project, entry)
+            modules = [module_ref.ast for module_ref in project.values()]
 
-            with self.__reporter("Mangling modules"):
-                new_dotted = mangler.mangle_modules(project, self.rename_modules, self.preserve_modules, entry)
+        with reporter.stage("Mangling modules"):
+            new_dotted = mangler.mangle_modules(project, self.rename_modules, self.preserve_modules, entry)
 
-            # whole passes over every module, until a pass changes none of them
-            caches = [transforms.TransformCache(self.__config) for _ in modules]
-            modules_len, changed = len(modules), False
-            for j in self.__reporter("Applying transforms", range(self.__config.passes * len(modules))):
-                i = j % modules_len
-                modules[i], modified = caches[i].run(modules[i], 2)
-                changed |= modified
+        # whole passes over every module, until a pass changes none of them
+        caches = [transforms.TransformCache(self.__config) for _ in modules]
+        modules_len = len(modules)
+        with reporter.stage("Applying transforms", self.__config.passes * modules_len) as stage:
+            for _ in range(self.__config.passes):
+                changed = False
+                for i in range(modules_len):
+                    modules[i], modified = caches[i].run(modules[i], 2)
+                    changed |= modified
+                    stage.advance()
 
-                if i == modules_len - 1:
-                    if not changed:
-                        break
-                    changed = False
+                if not changed:
+                    break
 
-            # for richer progress bar support
-            iter_ = iter(self.__reporter("Mangling", range(-1, modules_len)))
-            next(iter_)
+        with reporter.stage("Mangling globals"):
             mangler.mangle_globals(project, self.rename_globals, self.preserve_globals)
 
-            for i in iter_:
+        with reporter.stage("Applying transforms after mangling", modules_len) as stage:
+            for i in stage.iter(range(modules_len)):
                 # global mangling changed the modules, so the caches start over
                 modules[i] = transforms.TransformCache(self.__config).run_passes(modules[i], 4)
 
-            await self.__dump_results(modules, project, new_dotted)
+        return await self.__dump_results(modules, project, new_dotted)
 
     async def __minify_modules(self, /) -> tuple[list[ast.Module], dict[str, ModuleRef]]:
-        def __run(task: Task, source: str, spec: ModuleSpec, /):
+        def __run(source: str, spec: ModuleSpec, /):
             local = sorted(preserved_names(str(spec), self.preserve_locals))
             return minify(
-                task, source, spec,
+                source, spec,
                 self.__config,
                 hoist_literals=self.hoist_literals,
                 rename=self.rename_locals,
@@ -226,21 +205,18 @@ class ProjectMinifier(Pipeline):
             )
 
         modules: list = [None] * len(self.__module_specs)
-        async def __worker(i: int, task: Task, spec: ModuleSpec, /):
-            source = await _read_async(spec.path, limiter=self.__limiter)
-            module, _ = await to_thread.run_sync(__run, task, source, spec, limiter=self.__limiter)
-            modules[i] = module
-            task.done()
+        with self.__reporter.stage("Compiling modules", len(modules)) as stage:
+            async def __worker(i: int, spec: ModuleSpec, /):
+                # one thread per module, for reading and compiling it
+                module, _ = await to_thread.run_sync(
+                    lambda: __run(_read(spec.path), spec), limiter=self.__limiter,
+                )
+                modules[i] = module
+                stage.advance()
 
-        async with _task_group() as tg:
-            # TODO: Cleanup this shit
-            j = len(self.__module_specs) - 1
-            for i, (task, spec) in enumerate(self.__reporter.iter(self.__module_specs, "Compiling modules")):
-                # noinspection async-call
-                t = tg.start_soon(__worker, i, task, spec)
-
-                if i == j:
-                    await t.wait()  # forcefully blocks the generator from finishing
+            async with _task_group() as tg:
+                for i, spec in enumerate(self.__module_specs):
+                    tg.start_soon(__worker, i, spec)
 
         if not all(modules):
             raise RuntimeError("Failed to compile all modules")
@@ -272,23 +248,25 @@ class ProjectMinifier(Pipeline):
         project: dict[str, ModuleRef],
         new_dotted: dict[str, str],
         /,
-    ):
-        async def module(node: ast.Module, /):
+    ) -> dict[str, str | None]:
+        outputs: dict[str, str | None] = dict.fromkeys(
+            str(spec.path) for spec in (*self.__module_specs, *self.__ffi_specs)
+        )
+
+        def module(node: ast.Module, /):
             spec = ref(node).spec
 
-            if self.__output is None:
-                # in-place: write each module back to its own original file
-                dest = spec.path
-            else:
-                dest = self.__output / _module_output_path(spec, new_dotted, self.__output_package is not None)
-                await dest.parent.mkdir(parents=True, exist_ok=True)
+            # in-place: write each module back to its own original file
+            dest = spec.path if self.__output is None else \
+                self.__output / _module_output_path(spec, new_dotted, self.__output_package is not None)
 
-            source = await to_thread.run_sync(unparse, str(spec.path), None, node, self.prefer_single_line)
-            await _write_async(dest, source, limiter=self.__limiter)
+            _write(dest, unparse(str(spec.path), None, node, self.prefer_single_line))
+            outputs[str(spec.path)] = str(dest)
 
-        async def binary(ffi_spec: _spec.FfiModuleSpec, /):
+        def binary(ffi_spec: _spec.FfiModuleSpec, /):
             if self.__output is None:
                 # in-place: the FFI file is already where it should be
+                outputs[str(ffi_spec.path)] = str(ffi_spec.path)
                 return
 
             parent, _, _ = str(ffi_spec).rpartition('.')
@@ -302,23 +280,20 @@ class ProjectMinifier(Pipeline):
                 new_parent = new_parent[1:]
             dest = self.__output.joinpath(*new_parent, ffi_spec.path.name)
 
-            await dest.parent.mkdir(parents=True, exist_ok=True)
-            await to_thread.run_sync(shutil.copy2, str(ffi_spec.path), str(dest))
+            os.makedirs(dest.parent, exist_ok=True)
+            shutil.copy2(ffi_spec.path, dest)
+            outputs[str(ffi_spec.path)] = str(dest)
 
-        def wrap[T](func: Callable[[T], Awaitable[None]]) -> Callable[[T], Callable[[Task], Awaitable[None]]]:
-            def wrapper(t: T) -> Callable[[Task], Awaitable[None]]:
-                async def runner(task: Task, /):
-                    await func(t)
-                    task.done()
-                return runner
-            return wrapper
+        with self.__reporter.stage("Writing output", len(modules) + len(self.__ffi_specs)) as stage:
+            async def advancing[T](func: Callable[[T], None], t: T, /):
+                # one thread per file, for everything writing it takes
+                await to_thread.run_sync(func, t, limiter=self.__limiter)
+                stage.advance()
 
-        tasks = set(map(wrap(module), modules)) | set(map(wrap(binary), self.__ffi_specs))
-        async with _task_group() as tg:
-            j = len(tasks) - 1
-            for i, (task, func) in enumerate(self.__reporter.iter(tasks, "Writing output")):
-                # noinspection async-call
-                t = tg.start_soon(func, task)
+            async with _task_group() as tg:
+                for node in modules:
+                    tg.start_soon(advancing, module, node)
+                for ffi_spec in self.__ffi_specs:
+                    tg.start_soon(advancing, binary, ffi_spec)
 
-                if i == j:
-                    await t.wait()
+        return outputs

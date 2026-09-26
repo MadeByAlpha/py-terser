@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from alpha93.progression import EmptyTask
-
 from ._minify import minify as __minify, unparse as __unparse
 from ._pipeline import linker, mangler, transforms
 from .ast import DummySpec, ref
@@ -57,7 +55,7 @@ def minify(
     """
 
     module, shebang = __minify(
-        EmptyTask(), source, DummySpec(path), config,
+        source, DummySpec(path), config,
         strict=strict,
         defines=defines,
         rename=rename_locals,
