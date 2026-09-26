@@ -340,3 +340,20 @@ def test_tqdm_terminal_more_stages_than_planned():
 
     last = [frame for frame in _frames(out) if frame.strip()][-1]
     assert last.startswith("100%|") and "| 2/2 [" in last
+
+
+@pytest.mark.parametrize("workers", [1, 3])
+def test_workers_bound_threads(tmp_path, monkeypatch, workers):
+    root = write_tree(tmp_path / "src", {f"pkg/mod{i}.py": f"def f{i}(value):\n    return value + {i}\n" for i in range(24)}
+                      | {"pkg/__init__.py": ""})
+    started = []
+    real_start = threading.Thread.start
+
+    def start(self):
+        started.append(self)
+        real_start(self)
+
+    monkeypatch.setattr(threading.Thread, "start", start)
+    anyio.run(partial(minify_project, TransformConfig(), {str(root)}, None, anyio.Path(tmp_path / "out"),
+                      workers=workers))
+    assert 1 <= len(started) <= workers

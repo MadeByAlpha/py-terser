@@ -201,3 +201,27 @@ def test_pyw_files(tmp_path):
     minify(root, output=out)
     assert set(read_tree(out)) == {"app.pyw", "helper.py"}
     assert run_py("app.pyw", cwd=out).stdout == "42\n"
+
+
+@pytest.mark.xfail(strict=True, reason="`from . import sub` is neither renamed nor followed by tree-shaking")
+@pytest.mark.parametrize("options", [{"rename_modules": True}, {"entry": {"main"}}])
+def test_relative_submodule_import(tmp_path, options):
+    root = write_tree(tmp_path / "src", {
+        "main.py": "import pkg\nprint(pkg.VALUE)\n",
+        "pkg/__init__.py": "from . import sub\nVALUE = sub.X\n",
+        "pkg/sub.py": "X = 1\n",
+    })
+    out = tmp_path / "out"
+    minify(root, output=out, preserve_modules={"main"}, **options)
+    assert run_py("main.py", cwd=out).stdout == "1\n"
+
+
+@pytest.mark.xfail(strict=True, reason="tree-shaking does not follow imports inside functions")
+def test_entry_keeps_function_level_imports(tmp_path):
+    root = write_tree(tmp_path / "src", {
+        "main.py": "def f():\n    import dep\n    return dep.Y\nprint(f())\n",
+        "dep.py": "Y = 2\n",
+    })
+    out = tmp_path / "out"
+    minify(root, output=out, entry={"main"})
+    assert run_py("main.py", cwd=out).stdout == "2\n"

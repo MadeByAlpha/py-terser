@@ -191,8 +191,15 @@ remove_annotations = true
 
 Supported keys:
 
-- Top level: `hoist_literals`, `rename_locals`, `preserve_locals`, `rename_globals`, `preserve_globals`, `workers`
-  (number of worker threads, same as `--workers`)
+- Top level: `hoist_literals`, `rename_locals`, `preserve_locals`, `rename_globals`, `preserve_globals`, `workers`,
+  `rename_modules`, `preserve_modules` and `entry`, the same as the command-line options:
+  - `workers`: the most threads to minify with (and so to create); a positive integer.
+  - `rename_modules`: renamed modules and packages are renamed in the wheel too, and a renamed package takes its other
+    files (data files, stubs, extension modules) along. Modules the project's scripts and entry points refer to keep
+    their names.
+  - `entry`: dotted module paths, or paths of module files relative to the project root. Modules unreachable from
+    them are left out of the wheel. The modules the scripts and entry points refer to count as entries too. An entry
+    that is not a module of the build is an error.
 - `config` table: every `TransformConfig` field (see [Python API](#python-api)). `remove_annotations` also takes a
   table of the four `remove_*_annotations` options.
 
@@ -235,7 +242,8 @@ anyio.run(
 
 `TransformConfig` has the same fields as the transform options above (`remove_annotations` also accepts a
 `RemoveAnnotationOptions` instead of a `bool`). `minify_project` accepts the mangling options as keyword arguments,
-plus `workers`, `rename_modules`, `preserve_modules` and `entry`.
+plus `workers`, `rename_modules`, `preserve_modules` and `entry`. `minify_project()` returns where each module and
+extension module went: its source path to its output path, or to `None` when tree-shaking dropped it.
 
 ## Contracts
 

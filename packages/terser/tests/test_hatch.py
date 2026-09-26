@@ -4,8 +4,11 @@ import hashlib
 import io
 import sys
 import zipfile
+from pathlib import Path
 
 import pytest
+from hatchling.metadata.core import ProjectMetadata
+from hatchling.plugin.manager import PluginManager
 from helpers import RecordingReporter, run_py, write_tree
 
 from terser.hatch import TerserBuildHook
@@ -148,7 +151,8 @@ def _build_rollup(tmp_path, config=None):
     dist = project / "dist"
     path = next(dist.glob("*.whl"))
 
-    hook = TerserBuildHook(str(project), config or {}, None, None, str(dist), "rollup")
+    metadata = ProjectMetadata(str(project), PluginManager())
+    hook = TerserBuildHook(str(project), config or {}, None, metadata, str(dist), "rollup")
     build_data = {}
     hook.initialize("standard", build_data)
     assert build_data == {}  # nothing to do before the vendored files exist
@@ -300,3 +304,159 @@ def test_wheel_workers_option(tmp_path):
     result = run_py("-m", "hatchling", "build", "-t", "wheel", "-d", "dist", cwd=bad, check=False)
     assert result.returncode != 0
     assert "`workers` must be a positive integer, got 0" in result.stderr
+
+
+MODULES_PYPROJECT = """\
+[build-system]
+requires = ["hatchling", "py-terser"]
+build-backend = "hatchling.build"
+
+[project]
+name = "demo"
+version = "0.0.1"
+
+[project.scripts]
+demo-cli = "demo.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/demo"]
+
+[tool.hatch.build.targets.wheel.hooks.terser]
+"""
+
+MODULES_SOURCES = {
+    "src/demo/__init__.py": "from demo.math import add_numbers\n",
+    "src/demo/math.py": (
+        "from demo.sub import scale\n\n\n"
+        "def add_numbers(first_number, second_number):\n"
+        "    return scale(first_number) + second_number\n"
+    ),
+    "src/demo/sub/__init__.py": "def scale(some_number):\n    return some_number * 2\n",
+    "src/demo/sub/data.txt": "some data\n",
+    "src/demo/unused.py": "def never_called():\n    return 'unused'\n",
+    "src/demo/cli.py": "def main():\n    print('cli')\n",
+}
+
+
+def _build_modules_wheel(tmp_path, options, check=True):
+    project = write_tree(tmp_path / "demo", {"pyproject.toml": MODULES_PYPROJECT + options, **MODULES_SOURCES})
+    result = run_py("-m", "hatchling", "build", "-t", "wheel", "-d", "dist", cwd=project, check=check)
+    wheels = list((project / "dist").glob("*.whl"))
+    return result, (wheels[0] if wheels else None)
+
+
+def _package_files(path):
+    with zipfile.ZipFile(path) as whl:
+        assert _record_is_valid(whl)
+        return {name for name in whl.namelist() if name.startswith("demo/")}
+
+
+def _run_demo(path, code="from demo import add_numbers; print(add_numbers(20, 2))"):
+    return run_py("-c", code, env={"PYTHONPATH": str(path)}).stdout
+
+
+def test_wheel_rename_modules(tmp_path):
+    _, path = _build_modules_wheel(tmp_path, 'rename_modules = true\npreserve_modules = ["demo"]\n')
+    files = _package_files(path)
+
+    assert "demo/__init__.py" in files
+    assert not {"demo/math.py", "demo/sub/__init__.py", "demo/unused.py"} & files
+    # the data file went along with its renamed package
+    [data] = [name for name in files if name.endswith("/data.txt")]
+    assert data != "demo/sub/data.txt"
+    assert data.rpartition("/")[0] + "/__init__.py" in files
+    assert _run_demo(path) == "42\n"
+
+
+def test_wheel_rename_modules_keeps_entry_points(tmp_path):
+    _, path = _build_modules_wheel(tmp_path, "rename_modules = true\n")
+    files = _package_files(path)
+
+    # `demo.cli:main` is a console script: it and its package keep their names
+    assert {"demo/__init__.py", "demo/cli.py"} <= files
+    assert "demo/math.py" not in files
+    assert _run_demo(path, "from demo.cli import main; main()") == "cli\n"
+
+
+@pytest.mark.parametrize("entry", ["demo", "src/demo/__init__.py"])
+def test_wheel_entry_drops_unreachable_modules(tmp_path, entry):
+    _, path = _build_modules_wheel(tmp_path, f'entry = ["{entry}"]\n')
+    files = _package_files(path)
+
+    assert "demo/unused.py" not in files
+    # a console script is an entry point of its own
+    assert {"demo/__init__.py", "demo/math.py", "demo/sub/__init__.py", "demo/sub/data.txt", "demo/cli.py"} <= files
+    assert _run_demo(path) == "42\n"
+
+
+def test_wheel_entry_must_be_in_the_build(tmp_path):
+    result, _ = _build_modules_wheel(tmp_path, 'entry = ["demo.missing"]\n', check=False)
+    assert result.returncode != 0
+    assert "entry `demo.missing` is neither a module nor a module file of the build" in result.stderr
+
+
+@pytest.mark.parametrize(("option", "value", "expected"), [
+    ("rename_modules", '"yes"', "a boolean"),
+    ("preserve_modules", '"demo"', "a list of strings"),
+    ("entry", "[1]", "a list of strings"),
+])
+def test_wheel_module_options_are_checked(tmp_path, option, value, expected):
+    result, _ = _build_modules_wheel(tmp_path, f"{option} = {value}\n", check=False)
+    assert result.returncode != 0
+    assert f"`{option}` must be {expected}" in result.stderr
+
+
+@pytest.fixture
+def extra_rollup_sources(monkeypatch):
+    def add(files):
+        monkeypatch.setattr(sys.modules[__name__], "ROLLUP_SOURCES", {**ROLLUP_SOURCES, **files})
+    return add
+
+
+# an extension module next to the source it was compiled from, the way mypyc builds ship them
+FFI = {
+    "vendor/helper/fast.py": "def fast_path(some_value):\n    result_value = some_value\n    return result_value\n",
+    "vendor/helper/fast.cpython-314-x86_64-linux-gnu.so": "not really a binary\n",
+}
+
+
+def test_rollup_source_next_to_extension_is_minified(tmp_path, extra_rollup_sources, monkeypatch):
+    extra_rollup_sources(FFI)
+
+    # which of the two took the module's name would come down to the order the files are listed in
+    minified_files = []
+    real_minify = TerserBuildHook._minify
+
+    def minify(self, roots, *args):
+        minified_files.extend(p.name for root in roots for p in Path(root).rglob("*") if p.is_file())
+        return real_minify(self, roots, *args)
+
+    monkeypatch.setattr(TerserBuildHook, "_minify", minify)
+    _, path = _build_rollup(tmp_path)
+    assert "fast.py" in minified_files
+    assert not [name for name in minified_files if name.endswith(".so")]
+
+    with zipfile.ZipFile(path) as whl:
+        assert _record_is_valid(whl)
+        assert "result_value" not in whl.read("helper/fast.py").decode()
+        assert whl.read("helper/fast.cpython-314-x86_64-linux-gnu.so").decode() == "not really a binary\n"
+
+
+def test_rollup_rename_modules_and_entry(tmp_path, extra_rollup_sources):
+    extra_rollup_sources({"vendor/helper/unused.py": "def never_called():\n    return 'unused'\n", **FFI})
+    dist, path = _build_rollup(tmp_path, {"rename_modules": True, "entry": ["demo"]})
+
+    with zipfile.ZipFile(path) as whl:
+        assert _record_is_valid(whl)
+        names = set(whl.namelist())
+
+    assert "demo/__init__.py" in names  # an entry module keeps its name
+    assert not {"demo/math.py", "helper/__init__.py", "helper/unused.py"} & names
+    # files other than modules went along with the renamed package
+    [data] = [name for name in names if name.endswith("/data.txt")]
+    [binary] = [name for name in names if name.endswith(".so")]
+    assert data.rpartition("/")[0] == binary.rpartition("/")[0] != "helper"
+    assert len([name for name in names if name.endswith(".py") and ".data/" not in name]) == 3
+    assert run_py("-c", "from demo import add_numbers; print(add_numbers(20, 2))",
+                  env={"PYTHONPATH": str(path)}).stdout == "42\n"
+    assert list(dist.iterdir()) == [path]

@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 import anyio
-from anyio import AsyncFile, CapacityLimiter, Path, to_thread
+from anyio import CapacityLimiter, Path, to_thread
 
 from alpha93.progression import NullReporter
 
@@ -18,15 +18,12 @@ from .ast.ref import spec as _spec
 
 if TYPE_CHECKING:
     import ast
-    from collections.abc import Callable, Coroutine
-    from typing import Any
+    from collections.abc import Callable
 
     from alpha93.progression import Reporter
     from terser.ast.ref import ModuleRef, ModuleSpec
 
     from .config import TransformConfig
-
-    type Awaitable[T] = Coroutine[Any, Any, T]
 
 
 @asynccontextmanager
@@ -42,25 +39,16 @@ async def _task_group():
         raise
 
 
-async def _read_async(path: Path, /, *, limiter: CapacityLimiter) -> str:
-    # noinspection bad-argument-type
-    source_fp = await to_thread.run_sync(path._path.open, 'r', limiter=limiter)
-    source_io = AsyncFile(source_fp, limiter=limiter)
-    try:
-        # noinspection bad-return
-        return await source_io.read()
-    finally:
-        await source_io.aclose()
+def _read(path: os.PathLike[str], /) -> str:
+    with open(path) as fp:
+        return fp.read()
 
-async def _write_async(path: Path, source: str, /, *, limiter: CapacityLimiter):
-    # noinspection bad-argument-type
-    source_fp = await to_thread.run_sync(path._path.open, 'w', limiter=limiter)
-    source_io = AsyncFile(source_fp, limiter=limiter)
-    try:
-        # noinspection bad-argument-type
-        await source_io.write(source)
-    finally:
-        await source_io.aclose()
+
+def _write(path: os.PathLike[str], source: str, /) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w') as fp:
+        fp.write(source)
+
 
 def _module_output_path(spec: _spec.ModuleSpec, new_dotted: dict[str, str], strip: int = 0) -> Path:
     """
@@ -146,6 +134,10 @@ class ProjectMinifier(Pipeline):
         Minify the modules under `paths` as one project.
 
         :param reporter: Receives the progress of every stage; closing it is up to the caller
+        :param workers: Most threads to run at once (and so to create), for all the work done in
+            threads: reading, compiling and writing modules, and copying FFI binaries
+        :return: Where each module and FFI binary of the project went: its source path to its
+            output path, or to None when tree-shaking dropped it
         """
 
         reporter = reporter or NullReporter()
@@ -154,13 +146,14 @@ class ProjectMinifier(Pipeline):
         if len(paths) > 1 and not output:
             raise ValueError("Multiple paths are given, but no output path specified")
 
+        # resolving paths awaits one file system call at a time, so it takes one thread at most
         with reporter.stage("Resolving paths"):
             pp = PathProvider(paths)
             await pp.resolve()
 
-        await cls(pp, config, reporter, output, *args, **kwargs)()
+        return await cls(pp, config, reporter, output, *args, **kwargs)()
 
-    async def __call__(self, /):
+    async def __call__(self, /) -> dict[str, str | None]:
         reporter = self.__reporter
         modules, project = await self.__minify_modules()
 
@@ -198,7 +191,7 @@ class ProjectMinifier(Pipeline):
                 # global mangling changed the modules, so the caches start over
                 modules[i] = transforms.TransformCache(self.__config).run_passes(modules[i], 4)
 
-        await self.__dump_results(modules, project, new_dotted)
+        return await self.__dump_results(modules, project, new_dotted)
 
     async def __minify_modules(self, /) -> tuple[list[ast.Module], dict[str, ModuleRef]]:
         def __run(source: str, spec: ModuleSpec, /):
@@ -214,8 +207,10 @@ class ProjectMinifier(Pipeline):
         modules: list = [None] * len(self.__module_specs)
         with self.__reporter.stage("Compiling modules", len(modules)) as stage:
             async def __worker(i: int, spec: ModuleSpec, /):
-                source = await _read_async(spec.path, limiter=self.__limiter)
-                module, _ = await to_thread.run_sync(__run, source, spec, limiter=self.__limiter)
+                # one thread per module, for reading and compiling it
+                module, _ = await to_thread.run_sync(
+                    lambda: __run(_read(spec.path), spec), limiter=self.__limiter,
+                )
                 modules[i] = module
                 stage.advance()
 
@@ -253,23 +248,25 @@ class ProjectMinifier(Pipeline):
         project: dict[str, ModuleRef],
         new_dotted: dict[str, str],
         /,
-    ):
-        async def module(node: ast.Module, /):
+    ) -> dict[str, str | None]:
+        outputs: dict[str, str | None] = dict.fromkeys(
+            str(spec.path) for spec in (*self.__module_specs, *self.__ffi_specs)
+        )
+
+        def module(node: ast.Module, /):
             spec = ref(node).spec
 
-            if self.__output is None:
-                # in-place: write each module back to its own original file
-                dest = spec.path
-            else:
-                dest = self.__output / _module_output_path(spec, new_dotted, self.__output_package is not None)
-                await dest.parent.mkdir(parents=True, exist_ok=True)
+            # in-place: write each module back to its own original file
+            dest = spec.path if self.__output is None else \
+                self.__output / _module_output_path(spec, new_dotted, self.__output_package is not None)
 
-            source = await to_thread.run_sync(unparse, str(spec.path), None, node, self.prefer_single_line)
-            await _write_async(dest, source, limiter=self.__limiter)
+            _write(dest, unparse(str(spec.path), None, node, self.prefer_single_line))
+            outputs[str(spec.path)] = str(dest)
 
-        async def binary(ffi_spec: _spec.FfiModuleSpec, /):
+        def binary(ffi_spec: _spec.FfiModuleSpec, /):
             if self.__output is None:
                 # in-place: the FFI file is already where it should be
+                outputs[str(ffi_spec.path)] = str(ffi_spec.path)
                 return
 
             parent, _, _ = str(ffi_spec).rpartition('.')
@@ -283,12 +280,14 @@ class ProjectMinifier(Pipeline):
                 new_parent = new_parent[1:]
             dest = self.__output.joinpath(*new_parent, ffi_spec.path.name)
 
-            await dest.parent.mkdir(parents=True, exist_ok=True)
-            await to_thread.run_sync(shutil.copy2, str(ffi_spec.path), str(dest))
+            os.makedirs(dest.parent, exist_ok=True)
+            shutil.copy2(ffi_spec.path, dest)
+            outputs[str(ffi_spec.path)] = str(dest)
 
         with self.__reporter.stage("Writing output", len(modules) + len(self.__ffi_specs)) as stage:
-            async def advancing[T](func: Callable[[T], Awaitable[None]], t: T, /):
-                await func(t)
+            async def advancing[T](func: Callable[[T], None], t: T, /):
+                # one thread per file, for everything writing it takes
+                await to_thread.run_sync(func, t, limiter=self.__limiter)
                 stage.advance()
 
             async with _task_group() as tg:
@@ -296,3 +295,5 @@ class ProjectMinifier(Pipeline):
                     tg.start_soon(advancing, module, node)
                 for ffi_spec in self.__ffi_specs:
                     tg.start_soon(advancing, binary, ffi_spec)
+
+        return outputs
