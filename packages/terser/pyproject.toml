@@ -37,6 +37,7 @@ dependencies = [
     "alpha93>=1.2.5",
     "anyio>=4.14.2",
     "hatchling>=1.17",
+    "tqdm>=4.68.4",
 ]
 
 [dependency-groups]
@@ -45,7 +46,6 @@ trio = [
 ]
 cli = [
     "pydantic>=2.13.4",
-    "tqdm>=4.68.4",
 ]
 hatchling = [
     "hatchling>=1.31.0",

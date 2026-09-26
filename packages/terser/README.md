@@ -24,12 +24,12 @@ py-terser currently supports Python 3.13 to Python 3.14.
 pip install py-terser
 ```
 
-The command-line interface additionally requires `pydantic` and `tqdm`:
+The command-line interface additionally requires `pydantic`:
 
 ```shell
-pip install py-terser pydantic tqdm
+pip install py-terser pydantic
 # or, as a standalone tool
-uv tool install py-terser --with pydantic --with tqdm
+uv tool install py-terser --with pydantic
 ```
 
 To work on py-terser itself:
@@ -200,6 +200,8 @@ minified too, together with your sources as one project. rollup-py adds them fro
 every other hook, so the hook minifies the built wheel instead and rewrites its `RECORD` (scripts and data files are
 left untouched). The hook is configured the same way, under `[tool.hatch.build.targets.rollup.hooks.terser]` (or
 inherited from the `wheel` target).
+
+The hook shows the progress of each stage on stderr; `hatch build -q` (or `HATCH_QUIET=1`) turns it off.
 
 ## Python API
 

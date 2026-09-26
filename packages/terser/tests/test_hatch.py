@@ -74,6 +74,12 @@ def test_no_warnings(wheel):
     assert "Warning" not in result.stderr
 
 
+def test_progress_is_shown(wheel):
+    result, _, _ = wheel
+    assert "terser: Compiling modules: 100%" in result.stderr
+    assert "terser: Writing output: 100%" in result.stderr
+
+
 def test_output_directory_is_clean(wheel):
     _, dist, path = wheel
     assert list(dist.iterdir()) == [path]
@@ -135,8 +141,7 @@ def _record_is_valid(whl: zipfile.ZipFile) -> bool:
     return True
 
 
-@pytest.fixture
-def rollup_wheel(tmp_path):
+def _build_rollup(tmp_path):
     project = write_tree(tmp_path / "demo", {"pyproject.toml": ROLLUP_PYPROJECT, **ROLLUP_SOURCES})
     run_py("-m", "hatchling", "build", "-t", "wheel", "-d", "dist", cwd=project)
     dist = project / "dist"
@@ -148,6 +153,11 @@ def rollup_wheel(tmp_path):
     assert build_data == {}  # nothing to do before the vendored files exist
     hook.finalize("standard", build_data, str(path))
     return dist, path
+
+
+@pytest.fixture
+def rollup_wheel(tmp_path):
+    return _build_rollup(tmp_path)
 
 
 def test_rollup_vendored_sources_are_minified(rollup_wheel):
@@ -185,3 +195,16 @@ def test_rollup_wheel_works(rollup_wheel):
 def test_rollup_output_directory_is_clean(rollup_wheel):
     dist, path = rollup_wheel
     assert list(dist.iterdir()) == [path]
+
+
+def test_rollup_progress_is_shown(tmp_path, capsys):
+    _build_rollup(tmp_path)
+    stderr = capsys.readouterr().err
+    for stage in ("Extracting wheel", "Compiling modules", "Writing output", "Rewriting wheel"):
+        assert f"terser: {stage}: 100%" in stderr
+
+
+def test_rollup_progress_is_quiet(tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("HATCH_QUIET", "1")
+    _build_rollup(tmp_path)
+    assert "terser:" not in capsys.readouterr().err

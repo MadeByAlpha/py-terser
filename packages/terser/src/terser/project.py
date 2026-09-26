@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import anyio
 from anyio import AsyncFile, CapacityLimiter, Path, to_thread
 
-from alpha93.progression import HeadlessReporter
+from alpha93.progression import NullReporter
 
 from ._minify import minify, unparse
 from ._pipeline import PathProvider, Pipeline, linker, mangler, transforms, tree_shake
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
     from typing import Any
 
-    from alpha93.progression import BaseReporter, Task
+    from alpha93.progression import Reporter
     from terser.ast.ref import ModuleRef, ModuleSpec
 
     from .config import TransformConfig
@@ -81,7 +81,7 @@ class ProjectMinifier(Pipeline):
         path_provider: PathProvider,
         config: TransformConfig,
         /,
-        reporter: BaseReporter,
+        reporter: Reporter,
         output: Path | None = None,
         workers: int | None = None,
         *,
@@ -134,91 +134,73 @@ class ProjectMinifier(Pipeline):
         config: TransformConfig,
         paths: set[str],
         /,
-        reporter: BaseReporter | None = None,
+        reporter: Reporter | None = None,
         output: Path | None = None,
         *args,
         **kwargs
     ):
-        # noinspection argument-list,bad-assignment
-        reporter: BaseReporter = reporter or HeadlessReporter()
+        """
+        Minify the modules under `paths` as one project.
+
+        :param reporter: Receives the progress of every stage; closing it is up to the caller
+        """
+
+        reporter = reporter or NullReporter()
 
         if len(paths) > 1 and not output:
             raise ValueError("Multiple paths are given, but no output path specified")
 
-        with reporter.prepare("Resolving paths"):
+        with reporter.stage("Resolving paths"):
             pp = PathProvider(paths)
             await pp.resolve()
 
         await cls(pp, config, reporter, output, *args, **kwargs)()
 
     async def __call__(self, /):
-        with self.__reporter.prepare("Calculating task graph"):
-            from terser.utils.cli_helper import TqdmDebugTaskGraph
-            m, f = len(self.__module_specs), len(self.__ffi_specs)
+        reporter = self.__reporter
+        modules, project = await self.__minify_modules()
 
-            tg = TqdmDebugTaskGraph(
-                TqdmDebugTaskGraph.Task(m,
-                    TqdmDebugTaskGraph.Step(),
-                    TqdmDebugTaskGraph.Step(),
-                    TqdmDebugTaskGraph.Step(),
-                    TqdmDebugTaskGraph.IterableStep(self.__config.passes),
-                    TqdmDebugTaskGraph.Step(),
-                ),
-                TqdmDebugTaskGraph.IterableStep(m),
-                TqdmDebugTaskGraph.Step(),
-                TqdmDebugTaskGraph.Step(),
-                TqdmDebugTaskGraph.IterableStep(m * self.__config.passes),
-                TqdmDebugTaskGraph.IterableStep(m + 1),
-                TqdmDebugTaskGraph.Task(m + f),
-            )
-            del TqdmDebugTaskGraph, m, f
-
-        with self.__reporter as reporter:
-            reporter.init(task_graph=tg)
-            del tg
-
-            modules, project = await self.__minify_modules()
-
-            for module in self.__reporter("Linking", modules):
+        with reporter.stage("Linking", len(modules)) as stage:
+            for module in stage.iter(modules):
                 linker.link(module, project)
 
-            with self.__reporter("Tree-shaking"):
-                entry = await self.__resolve_entry(project)
-                project = tree_shake.shake(project, entry)
-                modules = [module_ref.ast for module_ref in project.values()]
+        with reporter.stage("Tree-shaking"):
+            entry = await self.__resolve_entry(project)
+            project = tree_shake.shake(project, entry)
+            modules = [module_ref.ast for module_ref in project.values()]
 
-            with self.__reporter("Mangling modules"):
-                new_dotted = mangler.mangle_modules(project, self.rename_modules, self.preserve_modules, entry)
+        with reporter.stage("Mangling modules"):
+            new_dotted = mangler.mangle_modules(project, self.rename_modules, self.preserve_modules, entry)
 
-            # whole passes over every module, until a pass changes none of them
-            caches = [transforms.TransformCache(self.__config) for _ in modules]
-            modules_len, changed = len(modules), False
-            for j in self.__reporter("Applying transforms", range(self.__config.passes * len(modules))):
-                i = j % modules_len
-                modules[i], modified = caches[i].run(modules[i], 2)
-                changed |= modified
+        # whole passes over every module, until a pass changes none of them
+        caches = [transforms.TransformCache(self.__config) for _ in modules]
+        modules_len = len(modules)
+        with reporter.stage("Applying transforms", self.__config.passes * modules_len) as stage:
+            for _ in range(self.__config.passes):
+                changed = False
+                for i in range(modules_len):
+                    modules[i], modified = caches[i].run(modules[i], 2)
+                    changed |= modified
+                    stage.advance()
 
-                if i == modules_len - 1:
-                    if not changed:
-                        break
-                    changed = False
+                if not changed:
+                    break
 
-            # for richer progress bar support
-            iter_ = iter(self.__reporter("Mangling", range(-1, modules_len)))
-            next(iter_)
+        with reporter.stage("Mangling globals"):
             mangler.mangle_globals(project, self.rename_globals, self.preserve_globals)
 
-            for i in iter_:
+        with reporter.stage("Applying transforms after mangling", modules_len) as stage:
+            for i in stage.iter(range(modules_len)):
                 # global mangling changed the modules, so the caches start over
                 modules[i] = transforms.TransformCache(self.__config).run_passes(modules[i], 4)
 
-            await self.__dump_results(modules, project, new_dotted)
+        await self.__dump_results(modules, project, new_dotted)
 
     async def __minify_modules(self, /) -> tuple[list[ast.Module], dict[str, ModuleRef]]:
-        def __run(task: Task, source: str, spec: ModuleSpec, /):
+        def __run(source: str, spec: ModuleSpec, /):
             local = sorted(preserved_names(str(spec), self.preserve_locals))
             return minify(
-                task, source, spec,
+                source, spec,
                 self.__config,
                 hoist_literals=self.hoist_literals,
                 rename=self.rename_locals,
@@ -226,21 +208,16 @@ class ProjectMinifier(Pipeline):
             )
 
         modules: list = [None] * len(self.__module_specs)
-        async def __worker(i: int, task: Task, spec: ModuleSpec, /):
-            source = await _read_async(spec.path, limiter=self.__limiter)
-            module, _ = await to_thread.run_sync(__run, task, source, spec, limiter=self.__limiter)
-            modules[i] = module
-            task.done()
+        with self.__reporter.stage("Compiling modules", len(modules)) as stage:
+            async def __worker(i: int, spec: ModuleSpec, /):
+                source = await _read_async(spec.path, limiter=self.__limiter)
+                module, _ = await to_thread.run_sync(__run, source, spec, limiter=self.__limiter)
+                modules[i] = module
+                stage.advance()
 
-        async with _task_group() as tg:
-            # TODO: Cleanup this shit
-            j = len(self.__module_specs) - 1
-            for i, (task, spec) in enumerate(self.__reporter.iter(self.__module_specs, "Compiling modules")):
-                # noinspection async-call
-                t = tg.start_soon(__worker, i, task, spec)
-
-                if i == j:
-                    await t.wait()  # forcefully blocks the generator from finishing
+            async with _task_group() as tg:
+                for i, spec in enumerate(self.__module_specs):
+                    tg.start_soon(__worker, i, spec)
 
         if not all(modules):
             raise RuntimeError("Failed to compile all modules")
@@ -305,20 +282,13 @@ class ProjectMinifier(Pipeline):
             await dest.parent.mkdir(parents=True, exist_ok=True)
             await to_thread.run_sync(shutil.copy2, str(ffi_spec.path), str(dest))
 
-        def wrap[T](func: Callable[[T], Awaitable[None]]) -> Callable[[T], Callable[[Task], Awaitable[None]]]:
-            def wrapper(t: T) -> Callable[[Task], Awaitable[None]]:
-                async def runner(task: Task, /):
-                    await func(t)
-                    task.done()
-                return runner
-            return wrapper
+        with self.__reporter.stage("Writing output", len(modules) + len(self.__ffi_specs)) as stage:
+            async def advancing[T](func: Callable[[T], Awaitable[None]], t: T, /):
+                await func(t)
+                stage.advance()
 
-        tasks = set(map(wrap(module), modules)) | set(map(wrap(binary), self.__ffi_specs))
-        async with _task_group() as tg:
-            j = len(tasks) - 1
-            for i, (task, func) in enumerate(self.__reporter.iter(tasks, "Writing output")):
-                # noinspection async-call
-                t = tg.start_soon(func, task)
-
-                if i == j:
-                    await t.wait()
+            async with _task_group() as tg:
+                for node in modules:
+                    tg.start_soon(advancing, module, node)
+                for ffi_spec in self.__ffi_specs:
+                    tg.start_soon(advancing, binary, ffi_spec)

@@ -8,7 +8,6 @@ from .ast import CompareError, ast, compare_ast
 from .exceptions import InvalidTransformError, UnbeneficialMinificationError
 
 if TYPE_CHECKING:
-    from alpha93.progression import Task
     from .ast.ref import ModuleSpec
     from .config import TransformConfig
 
@@ -49,7 +48,6 @@ def unparse(
 
 
 def minify(
-    task: Task,
     source: str,
     spec: ModuleSpec | str,
     /,
@@ -61,38 +59,33 @@ def minify(
     preserved_names: list[str] | None = None,
     hoist_literals: bool = True,
 ) -> tuple[ast.Module, str | None]:
-    with task("Preprocessing sources"):
-        source, shebang = preprocessor.preprocess(source, defines, strict)
+    source, shebang = preprocessor.preprocess(source, defines, strict)
+    module = parser.parse(source, spec, optimize=config.optimize)
 
-    with task("Parsing AST"):
-        module = parser.parse(source, spec, optimize=config.optimize)
+    for transform in transforms.__transforms__:
+        if not transform.is_enabled(config) or transform.FLAGS > 0:
+            continue
 
-        for transform in transforms.__transforms__:
-            if not transform.is_enabled(config) or transform.FLAGS > 0:
-                continue
+        module: ast.Module = transform(config)(module)
 
-            module: ast.Module = transform(config)(module)
-
-    with task("Resolving names"):
-        resolver.resolve(module)
-        resolver.bind(module)
+    resolver.resolve(module)
+    resolver.bind(module)
 
     cache = transforms.TransformCache(config)
-    for _ in task("Applying transforms", range(config.passes)):
+    for _ in range(config.passes):
         module, changed = cache.run(module, 1)
         if not changed:
             break
 
-    with task("Mangling"):
-        if hoist_literals:
-            mangler.hoist_literals(module)
+    if hoist_literals:
+        mangler.hoist_literals(module)
 
-        if rename:
-            mangler.mangle_locals(module, rename, preserved_names)
+    if rename:
+        mangler.mangle_locals(module, rename, preserved_names)
 
-        # mangling changed the module behind the previous cache's back, so start over. FLAGS == 2
-        # transforms need the module linked, which only happens after this function
-        module = transforms.TransformCache(config).run_passes(module, 1)
+    # mangling changed the module behind the previous cache's back, so start over. FLAGS == 2
+    # transforms need the module linked, which only happens after this function
+    module = transforms.TransformCache(config).run_passes(module, 1)
 
     # FIXME: lineno problem
     # try:

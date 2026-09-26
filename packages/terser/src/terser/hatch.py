@@ -16,6 +16,8 @@ import anyio
 import pathspec
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
+from alpha93.progression import NullReporter, Reporter, TqdmReporter
+
 from .config import RemoveAnnotationOptions, TransformConfig
 from .terser import minify_project
 
@@ -56,7 +58,8 @@ class TerserBuildHook(BuildHookInterface):
         # outside the build's output directory, and removed again in finalize()
         out_dir = Path(tempfile.mkdtemp(prefix="terser-build-"))
         self._out_dir = out_dir
-        self._minify(roots, out_dir)
+        with self._reporter() as reporter:
+            self._minify(roots, out_dir, reporter)
 
         # Minified files are added via force_include; the originals must be excluded
         # from the normal package walk, or the wheel builder rejects the duplicate
@@ -84,9 +87,14 @@ class TerserBuildHook(BuildHookInterface):
             self._out_dir = None
 
         if self.target_name in POSTPROCESS_TARGETS and artifact_path.endswith(".whl"):
-            self._minify_wheel(artifact_path)
+            with self._reporter() as reporter:
+                self._minify_wheel(artifact_path, reporter)
 
-    def _minify(self, roots: set[str], out_dir: Path) -> None:
+    def _reporter(self) -> Reporter:
+        # `hatch build -q` (or `HATCH_QUIET`) asks for less output
+        return NullReporter() if self.app.verbosity < 0 else TqdmReporter("terser: ")
+
+    def _minify(self, roots: set[str], out_dir: Path, reporter: Reporter) -> None:
         config_opts = dict(self.config.get("config", {}))
         if isinstance(remove_annotations := config_opts.get("remove_annotations"), dict):
             config_opts["remove_annotations"] = RemoveAnnotationOptions(**remove_annotations)
@@ -96,7 +104,7 @@ class TerserBuildHook(BuildHookInterface):
             minify_project(
                 config,
                 roots,
-                reporter=None,
+                reporter=reporter,
                 output=anyio.Path(out_dir),
                 hoist_literals=self.config.get("hoist_literals", True),
                 rename_locals=self.config.get("rename_locals", True),
@@ -106,7 +114,7 @@ class TerserBuildHook(BuildHookInterface):
             )
         )
 
-    def _minify_wheel(self, path: str) -> None:
+    def _minify_wheel(self, path: str, reporter: Reporter) -> None:
         """Minify every module of a built wheel in place (as one project), and rewrite its `RECORD`."""
 
         with zipfile.ZipFile(path) as wheel:
@@ -129,10 +137,11 @@ class TerserBuildHook(BuildHookInterface):
 
             with tempfile.TemporaryDirectory(prefix="terser-build-") as tmp:
                 src_dir, out_dir = Path(tmp, "src"), Path(tmp, "out")
-                for info in sources:
-                    wheel.extract(info, src_dir)
+                with reporter.stage("Extracting wheel", len(sources)) as stage:
+                    for info in stage.iter(sources):
+                        wheel.extract(info, src_dir)
 
-                self._minify({str(src_dir)}, out_dir)
+                self._minify({str(src_dir)}, out_dir, reporter)
 
                 minified = {
                     info.filename: (out_dir / info.filename).read_bytes()
@@ -151,8 +160,12 @@ class TerserBuildHook(BuildHookInterface):
 
             fd, tmp_path = tempfile.mkstemp(prefix=".terser-", suffix=".whl", dir=os.path.dirname(path))
             try:
-                with os.fdopen(fd, "wb") as fp, zipfile.ZipFile(fp, "w") as out:
-                    for info in infos:
+                with (
+                    reporter.stage("Rewriting wheel", len(infos)) as stage,
+                    os.fdopen(fd, "wb") as fp,
+                    zipfile.ZipFile(fp, "w") as out,
+                ):
+                    for info in stage.iter(infos):
                         if info.filename == record_name:
                             data = record.getvalue().encode()
                         elif (data := minified.get(info.filename)) is None:
