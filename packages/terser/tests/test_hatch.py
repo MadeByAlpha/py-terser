@@ -2,6 +2,7 @@ import base64
 import csv
 import hashlib
 import io
+import sys
 import zipfile
 
 import pytest
@@ -208,3 +209,28 @@ def test_rollup_progress_is_quiet(tmp_path, capsys, monkeypatch):
     monkeypatch.setenv("HATCH_QUIET", "1")
     _build_rollup(tmp_path)
     assert "terser:" not in capsys.readouterr().err
+
+
+def test_rollup_progress_without_tqdm(tmp_path, capsys, monkeypatch):
+    monkeypatch.setitem(sys.modules, "tqdm", None)
+    monkeypatch.delenv("CI", raising=False)
+    _build_rollup(tmp_path)
+    lines = capsys.readouterr().err.splitlines()
+
+    [warning] = [line for line in lines if "tqdm is not installed" in line]
+    assert "`[build-system].requires`" in warning
+    stages = [line for line in lines if line.startswith("terser: ") and line != warning]
+    assert stages[0] == "terser: Extracting wheel"
+    assert "terser: Compiling modules" in stages
+    assert stages[-1] == "terser: Rewriting wheel"
+
+
+def test_rollup_progress_without_tqdm_in_ci(tmp_path, capsys, monkeypatch):
+    monkeypatch.setitem(sys.modules, "tqdm", None)
+    monkeypatch.setenv("CI", "true")
+    _build_rollup(tmp_path)
+    stderr = capsys.readouterr().err
+
+    assert "tqdm is not installed" not in stderr
+    assert "terser: Compiling modules: started (3 total)" in stderr
+    assert "terser: Rewriting wheel: done " in stderr

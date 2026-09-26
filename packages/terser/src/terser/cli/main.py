@@ -5,7 +5,7 @@ import os
 import sys
 
 import terser
-from alpha93.progression import TqdmReporter
+from alpha93.progression import auto_reporter
 
 from .._pipeline.mangler.util import preserved_names
 from ..exceptions import UnbeneficialMinificationError
@@ -84,7 +84,7 @@ def main(argv: list[str] | None = None):
 
     import anyio
 
-    with TqdmReporter() as reporter:
+    with auto_reporter() as reporter:
         anyio.run(partial(terser.minify_project,
             args.transform_options,
             args.path,

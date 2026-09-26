@@ -1,4 +1,5 @@
 import io
+import sys
 import threading
 from functools import partial
 
@@ -6,7 +7,15 @@ import anyio
 import pytest
 from helpers import write_tree
 
-from alpha93.progression import NullReporter, Reporter, Stage, TqdmReporter
+from alpha93.progression import (
+    LogReporter,
+    NullReporter,
+    Reporter,
+    Stage,
+    TqdmReporter,
+    auto_reporter,
+    in_ci,
+)
 from terser import TransformConfig, minify_project
 
 PROJECT = {
@@ -167,3 +176,122 @@ def test_tqdm_draws_on_unsized_terminal():
         os.close(slave)
 
     assert "Counting: 100%" in drawn.decode()
+
+
+@pytest.fixture
+def no_tqdm(monkeypatch):
+    monkeypatch.setitem(sys.modules, "tqdm", None)  # makes `import tqdm` raise ImportError
+
+
+@pytest.mark.parametrize(("value", "expected"), [
+    (None, False), ("", False), ("0", False), ("false", False), ("False", False), ("no", False),
+    ("true", True), ("1", True), ("yes", True),
+])
+def test_in_ci(monkeypatch, value, expected):
+    if value is None:
+        monkeypatch.delenv("CI", raising=False)
+    else:
+        monkeypatch.setenv("CI", value)
+    assert in_ci() is expected
+
+
+def test_auto_reporter_uses_tqdm():
+    assert isinstance(auto_reporter(file=io.StringIO()), TqdmReporter)
+
+
+def test_auto_reporter_without_tqdm_in_ci(no_tqdm, monkeypatch):
+    monkeypatch.setenv("CI", "true")
+    out, warnings = io.StringIO(), []
+    with auto_reporter("tool: ", file=out, warn=warnings.append) as reporter, reporter.stage("Counting", 2) as stage:
+        stage.advance(2)
+
+    assert isinstance(reporter, LogReporter)
+    assert warnings == []
+    lines = out.getvalue().splitlines()
+    assert lines[0] == "tool: Counting: started (2 total)"
+    assert lines[-1].startswith("tool: Counting: done 2/2 in ")
+
+
+def test_auto_reporter_without_tqdm_outside_ci(no_tqdm, monkeypatch):
+    monkeypatch.delenv("CI", raising=False)
+    out, warnings = io.StringIO(), []
+    with auto_reporter("tool: ", file=out, warn=warnings.append) as reporter:
+        with reporter.stage("Counting", 3) as stage:
+            stage.advance(3)
+        with reporter.stage("Waiting"):
+            pass
+
+    assert warnings == ["tqdm is not installed, so only the stages are shown, not their progress"]
+    assert out.getvalue() == "tool: Counting\ntool: Waiting\n"
+
+
+def test_auto_reporter_warns_on_file_by_default(no_tqdm, monkeypatch):
+    monkeypatch.delenv("CI", raising=False)
+    out = io.StringIO()
+    auto_reporter("tool: ", file=out)
+    assert out.getvalue() == "tool: warning: tqdm is not installed, so only the stages are shown, not their progress\n"
+
+
+def _verbose_lines(run):
+    out = io.StringIO()
+    reporter = LogReporter("tool: ", file=out, verbose=True)
+    try:
+        run(reporter)
+    except ValueError:
+        pass
+    # durations vary: keep the lines up to them
+    return [line.rsplit(" [", 1)[0].rsplit(" in ", 1)[0].rsplit(" after ", 1)[0] for line in out.getvalue().splitlines()]
+
+
+def test_log_reporter_verbose_reports_every_tenth():
+    def run(reporter):
+        with reporter.stage("Counting", 20) as stage:
+            for _ in stage.iter(range(20)):
+                pass
+
+    assert _verbose_lines(run) == [
+        "tool: Counting: started (20 total)",
+        *(f"tool: Counting: {n}/20 ({n * 5}%)" for n in range(2, 20, 2)),
+        "tool: Counting: done 20/20",
+    ]
+
+
+def test_log_reporter_verbose_stage_without_total():
+    def run(reporter):
+        with reporter.stage("Waiting"):
+            pass
+
+    assert _verbose_lines(run) == ["tool: Waiting: started", "tool: Waiting: done"]
+
+
+def test_log_reporter_verbose_stage_finished_early():
+    def run(reporter):
+        with reporter.stage("Passes", 10) as stage:
+            for i in stage.iter(range(10)):
+                if i == 3:
+                    break
+
+    assert _verbose_lines(run)[-1] == "tool: Passes: done 3/3"
+
+
+def test_log_reporter_verbose_failed_stage():
+    def run(reporter):
+        with reporter.stage("Failing", 4) as stage:
+            stage.advance()
+            raise ValueError
+
+    assert _verbose_lines(run)[-1] == "tool: Failing: failed at 1/4"
+
+
+def test_log_reporter_verbose_is_thread_safe():
+    out = io.StringIO()
+    with LogReporter(file=out, verbose=True) as reporter, reporter.stage("Threads", 8000) as stage:
+        threads = [threading.Thread(target=lambda: [stage.advance() for _ in range(1000)]) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+    lines = out.getvalue().splitlines()
+    assert len(lines) == 1 + 9 + 1  # started, every tenth but the last, done
+    assert lines[-1].startswith("Threads: done 8000/8000 in ")

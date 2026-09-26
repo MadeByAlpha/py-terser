@@ -16,7 +16,7 @@ import anyio
 import pathspec
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
-from alpha93.progression import NullReporter, Reporter, TqdmReporter
+from alpha93.progression import NullReporter, Reporter, auto_reporter
 
 from .config import RemoveAnnotationOptions, TransformConfig
 from .terser import minify_project
@@ -92,7 +92,14 @@ class TerserBuildHook(BuildHookInterface):
 
     def _reporter(self) -> Reporter:
         # `hatch build -q` (or `HATCH_QUIET`) asks for less output
-        return NullReporter() if self.app.verbosity < 0 else TqdmReporter("terser: ")
+        if self.app.verbosity < 0:
+            return NullReporter()
+
+        # tqdm comes with py-terser, but a build environment only has what `[build-system].requires` lists
+        def warn(message: str) -> None:
+            self.app.display_warning(f'terser: {message}; add "tqdm" to `[build-system].requires` to see it')
+
+        return auto_reporter("terser: ", warn=warn)
 
     def _minify(self, roots: set[str], out_dir: Path, reporter: Reporter) -> None:
         config_opts = dict(self.config.get("config", {}))
