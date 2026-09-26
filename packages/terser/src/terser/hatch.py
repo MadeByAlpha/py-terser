@@ -110,6 +110,10 @@ class TerserBuildHook(BuildHookInterface):
             config_opts["remove_annotations"] = RemoveAnnotationOptions(**remove_annotations)
         config = TransformConfig(**config_opts)
 
+        workers = self.config.get("workers")
+        if workers is not None and (type(workers) is not int or workers < 1):
+            raise ValueError(f"terser: `workers` must be a positive integer, got {workers!r}")
+
         asyncio.run(
             minify_project(
                 config,
@@ -121,6 +125,7 @@ class TerserBuildHook(BuildHookInterface):
                 preserve_locals=self.config.get("preserve_locals"),
                 rename_globals=self.config.get("rename_globals", False),
                 preserve_globals=self.config.get("preserve_globals"),
+                workers=workers,
             )
         )
 

@@ -142,13 +142,13 @@ def _record_is_valid(whl: zipfile.ZipFile) -> bool:
     return True
 
 
-def _build_rollup(tmp_path):
+def _build_rollup(tmp_path, config=None):
     project = write_tree(tmp_path / "demo", {"pyproject.toml": ROLLUP_PYPROJECT, **ROLLUP_SOURCES})
     run_py("-m", "hatchling", "build", "-t", "wheel", "-d", "dist", cwd=project)
     dist = project / "dist"
     path = next(dist.glob("*.whl"))
 
-    hook = TerserBuildHook(str(project), {}, None, None, str(dist), "rollup")
+    hook = TerserBuildHook(str(project), config or {}, None, None, str(dist), "rollup")
     build_data = {}
     hook.initialize("standard", build_data)
     assert build_data == {}  # nothing to do before the vendored files exist
@@ -246,3 +246,57 @@ def test_rollup_plans_every_stage(tmp_path, monkeypatch):
     assert reporter.planned == len(reporter.stages) == 11
     assert reporter.stages[0].name == "Extracting wheel"
     assert reporter.stages[-1].name == "Rewriting wheel"
+
+
+def _capture_workers(monkeypatch):
+    import terser.hatch
+    from terser.project import ProjectMinifier
+
+    seen = []
+    real_init = ProjectMinifier.__init__
+
+    def init(self, *args, **kwargs):
+        real_init(self, *args, **kwargs)
+        # the limiter decides how many modules are compiled at once
+        seen.append((kwargs.get("workers"), self._ProjectMinifier__limiter.total_tokens))
+
+    monkeypatch.setattr(ProjectMinifier, "__init__", init)
+    monkeypatch.setattr(terser.hatch, "auto_reporter", lambda *args, **kwargs: RecordingReporter())
+    return seen
+
+
+def test_workers_option(tmp_path, monkeypatch):
+    seen = _capture_workers(monkeypatch)
+    _build_rollup(tmp_path, {"workers": 2})
+    assert seen == [(2, 2)]
+
+
+def test_workers_default(tmp_path, monkeypatch):
+    seen = _capture_workers(monkeypatch)
+    _build_rollup(tmp_path)
+    [(workers, tokens)] = seen
+    assert workers is None and tokens >= 1
+
+
+@pytest.mark.parametrize("workers", [0, -1, "2", True, 1.5])
+def test_workers_must_be_positive_integer(tmp_path, monkeypatch, workers):
+    _capture_workers(monkeypatch)
+    with pytest.raises(ValueError, match="`workers` must be a positive integer"):
+        _build_rollup(tmp_path, {"workers": workers})
+
+
+def _with_workers(workers):
+    table = "[tool.hatch.build.targets.wheel.hooks.terser]\n"
+    assert PYPROJECT.count(table) == 1
+    return PYPROJECT.replace(table, f"{table}workers = {workers}\n")
+
+
+def test_wheel_workers_option(tmp_path):
+    project = write_tree(tmp_path / "demo", {"pyproject.toml": _with_workers(1), **SOURCES})
+    run_py("-m", "hatchling", "build", "-t", "wheel", "-d", "dist", cwd=project)
+    assert next((project / "dist").glob("*.whl"))
+
+    bad = write_tree(tmp_path / "bad", {"pyproject.toml": _with_workers(0), **SOURCES})
+    result = run_py("-m", "hatchling", "build", "-t", "wheel", "-d", "dist", cwd=bad, check=False)
+    assert result.returncode != 0
+    assert "`workers` must be a positive integer, got 0" in result.stderr

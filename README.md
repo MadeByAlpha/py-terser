@@ -191,7 +191,8 @@ remove_annotations = true
 
 Supported keys:
 
-- Top level: `hoist_literals`, `rename_locals`, `preserve_locals`, `rename_globals`, `preserve_globals`
+- Top level: `hoist_literals`, `rename_locals`, `preserve_locals`, `rename_globals`, `preserve_globals`, `workers`
+  (number of worker threads, same as `--workers`)
 - `config` table: every `TransformConfig` field (see [Python API](#python-api)). `remove_annotations` also takes a
   table of the four `remove_*_annotations` options.
 
