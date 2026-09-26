@@ -1,0 +1,71 @@
+[project]
+name = "terser-hints"
+authors = [{ name = "Alpha", email = "dev@alpha93.kr" }]
+description = "Type hint stubs for py-terser"
+keywords = ["minify", "minifier", "uglify", "uglifier", "mangler", "compressor"]
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE.md"]
+dynamic = ["version"]
+classifiers = [
+    "Environment :: Console",
+    "Environment :: Plugins",
+    "Framework :: Hatch",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Software Development :: Pre-processors",
+    "Topic :: Text Processing :: General",
+    "Topic :: Utilities",
+
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    #"Programming Language :: Python :: 3.15",  # TODO
+    "Programming Language :: Python :: Free Threading",
+    "Programming Language :: Python :: Free Threading :: 3 - Stable",
+    "Programming Language :: Python :: Implementation :: CPython",
+
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+
+    "Development Status :: 3 - Alpha",
+]
+requires-python = ">=3.13"
+dependencies = []
+
+[dependency-groups]
+
+
+[project.urls]
+source = "https://github.com/MadeByAlpha/py-terser.git"
+issues = "https://github.com/MadeByAlpha/py-terser/issues"
+
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "../../pyproject.toml"
+pattern = 'version = "(?P<version>[^"]+)"'
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/terser_hints.py", "src/terser_hints.pyi"]
+
+
+[tool.ruff]
+line-length = 120
+show-fixes = true
+respect-gitignore = true
+preview = true
+unsafe-fixes = true
+
+[tool.ruff.analyze]
+detect-string-imports = true
+
+[tool.ruff.lint]
+future-annotations = true
+ignore = ["E701", "E702", "E731"]

@@ -8,7 +8,7 @@ from ._minify import unparse
 from .config import TransformConfig
 from .terser import minify, minify_project
 
-version = "0.1.0"
+version = "0.1.1"
 
 __all__ = (
     "TransformConfig",
