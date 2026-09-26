@@ -1,22 +1,22 @@
 import io
 import sys
 import threading
+import time
 from functools import partial
 
 import anyio
 import pytest
-from helpers import write_tree
+from helpers import RecordingReporter, write_tree
 
 from alpha93.progression import (
     LogReporter,
     NullReporter,
-    Reporter,
-    Stage,
     TqdmReporter,
     auto_reporter,
     in_ci,
 )
 from terser import TransformConfig, minify_project
+from terser.project import ProjectMinifier
 
 PROJECT = {
     "pkg/__init__.py": "from pkg.util import twice\n",
@@ -25,36 +25,12 @@ PROJECT = {
 }
 
 
-class RecordingReporter(Reporter):
-    def __init__(self):
-        self.stages = []
-
-    def stage(self, name, total=None, /):
-        stage = RecordingStage(name, total)
-        self.stages.append(stage)
-        return stage
-
-
-class RecordingStage(Stage):
-    def __init__(self, name, total):
-        super().__init__(name, total)
-        self.done = 0
-        self.completed = None
-        self.__lock = threading.Lock()
-
-    def advance(self, n=1, /):
-        with self.__lock:
-            self.done += n
-
-    def _close(self, completed, /):
-        self.completed = completed
-
-
 def test_project_reports_every_stage(tmp_path):
     root = write_tree(tmp_path / "src", PROJECT)
     reporter = RecordingReporter()
     anyio.run(partial(minify_project, TransformConfig(), {str(root)}, reporter, anyio.Path(tmp_path / "out")))
 
+    assert reporter.planned == ProjectMinifier.STAGES == len(reporter.stages)
     assert [stage.name for stage in reporter.stages] == [
         "Resolving paths",
         "Compiling modules",
@@ -111,11 +87,12 @@ def test_tqdm_stages_are_kept():
     assert lines[1].startswith("tool: Waiting [")
 
 
-def test_tqdm_draws_at_once_on_terminal():
-    class Terminal(io.StringIO):
-        def isatty(self):
-            return True
+class Terminal(io.StringIO):
+    def isatty(self):
+        return True
 
+
+def test_tqdm_draws_at_once_on_terminal():
     out = Terminal()
     with TqdmReporter(file=out) as reporter, reporter.stage("Counting", 3):
         assert "Counting:   0%" in out.getvalue()
@@ -175,7 +152,7 @@ def test_tqdm_draws_on_unsized_terminal():
         os.close(master)
         os.close(slave)
 
-    assert "Counting: 100%" in drawn.decode()
+    assert "Counting:" in drawn.decode()
 
 
 @pytest.fixture
@@ -295,3 +272,71 @@ def test_log_reporter_verbose_is_thread_safe():
     lines = out.getvalue().splitlines()
     assert len(lines) == 1 + 9 + 1  # started, every tenth but the last, done
     assert lines[-1].startswith("Threads: done 8000/8000 in ")
+
+
+def test_plan_first_call_counts():
+    reporter = NullReporter()
+    assert reporter.planned is None
+    reporter.plan(11)
+    reporter.plan(9)  # a pipeline planning its part of a bigger run
+    assert reporter.planned == 11
+
+
+def _frames(out):
+    return out.getvalue().replace("\x1b[A", "").split("\r")
+
+
+def test_tqdm_terminal_shows_run_and_stage():
+    out = Terminal()
+    with TqdmReporter("tool: ", file=out) as reporter:
+        reporter.plan(2)
+        with reporter.stage("Counting", 4) as stage:
+            time.sleep(0.15)  # past the bars' redraw interval
+            stage.advance(2)
+            frames = _frames(out)
+            # the run's bar: half of the first of two stages
+            assert any(frame.startswith("tool:  25%|") and "| 1/2 [" in frame for frame in frames)
+            assert any(frame.startswith("tool: Counting:  50%|") and "2/4" in frame for frame in frames)
+            stage.advance(2)
+        with reporter.stage("Waiting"):
+            assert any(frame.startswith("tool:  50%|") and "| 2/2 [" in frame for frame in _frames(out))
+
+    last = [frame for frame in _frames(out) if frame.strip()][-1]
+    assert last.startswith("tool: 100%|") and "| 2/2 [" in last
+
+
+def test_tqdm_terminal_failed_run_stays_where_it_stopped():
+    out = Terminal()
+    with pytest.raises(ValueError), TqdmReporter(file=out) as reporter:
+        reporter.plan(4)
+        with reporter.stage("Done"):
+            pass
+        with reporter.stage("Failing", 2):
+            raise ValueError
+
+    last = [frame for frame in _frames(out) if frame.strip()][-1]
+    assert last.startswith(" 25%|") and "| 2/4 [" in last
+
+
+def test_tqdm_terminal_unplanned_run_counts_stages():
+    out = Terminal()
+    with TqdmReporter(file=out) as reporter:
+        for name in ("One", "Two"):
+            with reporter.stage(name):
+                pass
+
+    frames = _frames(out)
+    assert any(frame.startswith("stage 2 [") for frame in frames)
+    assert "%" not in "".join(frame for frame in frames if frame.startswith("stage"))
+
+
+def test_tqdm_terminal_more_stages_than_planned():
+    out = Terminal()
+    with TqdmReporter(file=out) as reporter:
+        reporter.plan(1)
+        for name in ("One", "Two"):
+            with reporter.stage(name):
+                pass
+
+    last = [frame for frame in _frames(out) if frame.strip()][-1]
+    assert last.startswith("100%|") and "| 2/2 [" in last

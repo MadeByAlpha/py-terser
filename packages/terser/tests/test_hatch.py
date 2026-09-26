@@ -6,7 +6,7 @@ import sys
 import zipfile
 
 import pytest
-from helpers import run_py, write_tree
+from helpers import RecordingReporter, run_py, write_tree
 
 from terser.hatch import TerserBuildHook
 
@@ -234,3 +234,15 @@ def test_rollup_progress_without_tqdm_in_ci(tmp_path, capsys, monkeypatch):
     assert "tqdm is not installed" not in stderr
     assert "terser: Compiling modules: started (3 total)" in stderr
     assert "terser: Rewriting wheel: done " in stderr
+
+
+def test_rollup_plans_every_stage(tmp_path, monkeypatch):
+    import terser.hatch
+
+    reporter = RecordingReporter()
+    monkeypatch.setattr(terser.hatch, "auto_reporter", lambda *args, **kwargs: reporter)
+    _build_rollup(tmp_path)
+
+    assert reporter.planned == len(reporter.stages) == 11
+    assert reporter.stages[0].name == "Extracting wheel"
+    assert reporter.stages[-1].name == "Rewriting wheel"

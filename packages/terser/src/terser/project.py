@@ -76,6 +76,9 @@ def _module_output_path(spec: _spec.ModuleSpec, new_dotted: dict[str, str], stri
 
 
 class ProjectMinifier(Pipeline):
+    # how many stages `minify()` reports
+    STAGES = 9
+
     def __init__(
         self,
         path_provider: PathProvider,
@@ -146,6 +149,7 @@ class ProjectMinifier(Pipeline):
         """
 
         reporter = reporter or NullReporter()
+        reporter.plan(cls.STAGES)
 
         if len(paths) > 1 and not output:
             raise ValueError("Multiple paths are given, but no output path specified")

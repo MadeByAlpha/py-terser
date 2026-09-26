@@ -19,6 +19,7 @@ from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 from alpha93.progression import NullReporter, Reporter, auto_reporter
 
 from .config import RemoveAnnotationOptions, TransformConfig
+from .project import ProjectMinifier
 from .terser import minify_project
 
 # Targets whose final set of files is only known once the artifact is built: `rollup` (rollup-py)
@@ -88,6 +89,8 @@ class TerserBuildHook(BuildHookInterface):
 
         if self.target_name in POSTPROCESS_TARGETS and artifact_path.endswith(".whl"):
             with self._reporter() as reporter:
+                # extracting and rewriting the wheel, around minifying it
+                reporter.plan(2 + ProjectMinifier.STAGES)
                 self._minify_wheel(artifact_path, reporter)
 
     def _reporter(self) -> Reporter:

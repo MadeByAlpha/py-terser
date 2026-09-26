@@ -44,6 +44,26 @@ class Stage(ABC):
 
 
 class Reporter(ABC):
+    _planned: int | None = None
+
+    @final
+    @property
+    def planned(self) -> int | None:
+        """How many stages the run was planned to have, if known."""
+        return self._planned
+
+    @final
+    def plan(self, stages: int, /) -> None:
+        """
+        Declare how many stages the run has, for showing its overall progress.
+
+        Only the first call counts: a caller running a pipeline as part of a bigger run plans the
+        whole run before the pipeline plans its own part.
+        """
+
+        if self._planned is None:
+            self._planned = stages
+
     @abstractmethod
     def stage(self, name: str, total: int | None = None, /) -> Stage:
         """

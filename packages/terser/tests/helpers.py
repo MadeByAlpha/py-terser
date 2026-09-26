@@ -3,9 +3,11 @@ import dataclasses
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import terser
+from alpha93.progression import Reporter, Stage
 from terser._minify import unparse
 from terser._pipeline import parser, resolver
 from terser.ast import CompareError, compare_ast
@@ -121,3 +123,30 @@ def read_tree(root: Path) -> dict[str, str]:
         for path in sorted(root.rglob("*"))
         if path.is_file() and "__pycache__" not in path.parts
     }
+
+
+class RecordingReporter(Reporter):
+    """Records every stage it is given, and how far each got."""
+
+    def __init__(self):
+        self.stages = []
+
+    def stage(self, name, total=None, /):
+        stage = RecordingStage(name, total)
+        self.stages.append(stage)
+        return stage
+
+
+class RecordingStage(Stage):
+    def __init__(self, name, total):
+        super().__init__(name, total)
+        self.done = 0
+        self.completed = None
+        self.__lock = threading.Lock()
+
+    def advance(self, n=1, /):
+        with self.__lock:
+            self.done += n
+
+    def _close(self, completed, /):
+        self.completed = completed
