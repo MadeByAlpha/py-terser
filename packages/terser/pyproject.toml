@@ -5,7 +5,6 @@ keywords = ["minify", "minifier", "uglify", "uglifier", "mangler", "compressor"]
 authors = [{ name = "Alpha", email = "dev@alpha93.kr" }]
 readme = "README.md"
 license = "MIT"
-license-files = ["LICENSE.md"]
 dynamic = ["version"]
 classifiers = [
     "Environment :: Console",

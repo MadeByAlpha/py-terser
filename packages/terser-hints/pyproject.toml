@@ -5,7 +5,6 @@ description = "Type hint stubs for py-terser"
 keywords = ["minify", "minifier", "uglify", "uglifier", "mangler", "compressor"]
 readme = "README.md"
 license = "MIT"
-license-files = ["LICENSE.md"]
 dynamic = ["version"]
 classifiers = [
     "Environment :: Console",
