@@ -29,6 +29,18 @@ def _unshare_singletons(node: ast.AST) -> None:
                         value[i] = type(item)()
 
 
+def _wrap_format_specs(node: ast.AST) -> None:
+    """
+    With `optimize > 0`, CPython's AST optimizer folds `'%-25s' % (x,)` into an f-string whose
+    `format_spec` is a bare `Constant`, whereas the parser always wraps it in a `JoinedStr`.
+    The f-string printer (and `compare_ast` against the reparsed output) expects the parser's
+    shape, so wrap it the same way.
+    """
+    for n in ast.walk(node):
+        if isinstance(n, ast.FormattedValue) and isinstance(n.format_spec, ast.Constant):
+            n.format_spec = ast.copy_location(ast.JoinedStr([n.format_spec]), n.format_spec)
+
+
 def parse(source: str, spec: ModuleSpec | str, mode: str = "exec", **kwargs):
     if isinstance(spec, str):
         path = spec
@@ -37,6 +49,8 @@ def parse(source: str, spec: ModuleSpec | str, mode: str = "exec", **kwargs):
         path = spec.path
 
     module: Any = ast.parse(source, path, mode, **kwargs)
+    if kwargs.get("optimize", -1) > 0:
+        _wrap_format_specs(module)
     _unshare_singletons(module)
     ModuleRef(module, spec)
     ScopeResolver.module(module)

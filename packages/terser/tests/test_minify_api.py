@@ -115,3 +115,11 @@ def test_defines():
 def test_unknown_keyword_argument():
     with pytest.raises(TypeError, match="bogus_option"):
         terser.minify(SOURCE, TransformConfig(), bogus_option=True)
+
+
+@pytest.mark.parametrize("optimize", [1, 2])
+def test_optimized_percent_format(optimize):
+    # the AST optimizer folds these into f-strings with a bare `Constant` format spec
+    source = "a, b = 'x', 1\nprint('%-5s|%5r|%a' % (a, b, a))\n"
+    minified = minify_src(source, TransformConfig(optimize=optimize))
+    assert execute(minified) == execute(source)
