@@ -6,10 +6,34 @@ from terser.utils.hints import is_hinted
 from ._suite import SuiteTransformer, TransformerFlag
 
 
+def _reads_doc(module: ast.Module) -> tuple[bool, bool]:
+    """
+    Whether `module` reads its own `__doc__`, and whether it reads any other docstring
+    (`x.__doc__`, or `__doc__` inside a class).
+    """
+
+    name = other = False
+    for node in ast.walk(module):
+        if isinstance(node, ast.Name) and node.id == '__doc__':
+            name = True
+        elif isinstance(node, ast.Attribute) and node.attr == '__doc__':
+            other = True
+        elif isinstance(node, ast.ClassDef) and any(
+            isinstance(n, ast.Name) and n.id == '__doc__' for n in ast.walk(node)
+        ):
+            # inside a class body, `__doc__` is the class's own docstring
+            other = True
+    return name, other
+
+
 class RemoveDocstrings(SuiteTransformer):
     """
     Remove docstrings, preserving module docstrings unless `also_modules` is
     set, and preserving anything decorated with `@terser_hints.preserve_docstring`
+
+    Docstrings that may be read are kept: the module's when `__doc__` is read anywhere in the
+    module, and every one when any `x.__doc__` is read (or `__doc__` inside a class), since that
+    could be any function's or class's docstring.
     """
     FLAGS = TransformerFlag.REQUIRES_IMPORT_RESOLVE
 
@@ -35,9 +59,13 @@ class RemoveDocstrings(SuiteTransformer):
 
     @override
     def visit_Module(self, node: ast.Module):
+        reads_module_doc, reads_other_doc = _reads_doc(node)
+        if reads_other_doc:
+            return node
+
         node.body = self.suite(node.body, parent=node)
 
-        if self._options.also_modules and self._has_docstring(node.body):
+        if self._options.also_modules and not reads_module_doc and self._has_docstring(node.body):
             node.body = node.body[1:]
 
         return node

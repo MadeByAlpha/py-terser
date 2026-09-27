@@ -123,7 +123,10 @@ def test_remove_literal_statements(tmp_path):
         "main.py": '"""Module docstring."""\n\ndef f():\n    """Function docstring."""\n    return 1\n\nprint(f())\n',
     })
     output = tmp_path / "out"
-    result = run_terser(project, "--output", output, "--remove-literal-statements", "True")
+    result = run_terser(
+        project, "--output", output, "--remove-literal-statements", "True",
+        "--remove-docstrings", "True", "--also-modules", "True",
+    )
     assert "Error" not in result.stderr
     assert "docstring" not in (output / "main.py").read_text()
 
