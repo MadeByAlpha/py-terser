@@ -4,8 +4,7 @@ import builtins
 from typing import TYPE_CHECKING, override
 
 from terser.ast import NodeVisitor, ast, ref
-from .binding import Binding, DynamicImportBinding, ImportBinding, NameBinding
-from .dynamic_import import match_dynamic_import_value
+from .binding import Binding, ImportBinding, NameBinding
 from .util import arg_rename_in_place, is_python_mangled_private, scope_ref_global
 
 if __debug__ and TYPE_CHECKING:
@@ -92,27 +91,6 @@ class NameResolver(NodeVisitor):
 
         if isinstance(node.ctx, (ast.Store, ast.Del)):
             self.__get_binding(node.id, namespace).add_reference(node)
-
-    @override
-    def visit_Assign(self, node: ast.Assign):
-        match = None
-        target = node.targets[0] if len(node.targets) == 1 else None
-        if isinstance(target, ast.Name):
-            match = match_dynamic_import_value(node.value)
-
-        if match is None:
-            self.generic_visit(node)
-            return
-
-        source_module, remote_name = match
-        namespace = ref(target).namespace
-        assert isinstance(target, ast.Name)
-
-        if target.id not in ref(namespace).nonlocals:
-            factory = lambda name: DynamicImportBinding(name, target, self.module_ref, source_module, remote_name)
-            self.__get_binding(target.id, namespace, factory).add_reference(target)
-
-        self.visit(node.value)
 
     @override
     def visit_ClassDef(self, node: ast.ClassDef):

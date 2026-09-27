@@ -507,38 +507,6 @@ class ImportBinding(NameBinding):
         return None
 
 
-class DynamicImportBinding(ImportBinding):
-    """
-    An `ImportBinding` synthesized from a dynamic-import expression - `__import__("mod")` or
-    `__import__("mod").attr` - assigned to a name, rather than a literal `import`/`from import`
-    statement. Lets `qualified_name` and the project-wide mangler treat these the same as a
-    real import: renamed/tracked consistently, and recognized by typing-aware transforms
-    (`TYPE_CHECKING` folding, `@typing.override` stripping, etc).
-
-    `target`/`target_name` (cross-module linking) are never populated here - resolving which
-    project module a dynamic import call refers to isn't part of `resolve_imports`'s static
-    import graph, so cross-module linking is out of scope for these for now.
-
-    See `terser._pipeline.resolver.dynamic_import` for the recognizer this is built from -
-    add new dynamic-import forms there, not here.
-    """
-
-    def __init__(self, name, node, module_ref: ModuleRef, source_module: str, remote_name: str | None, *args, **kwargs):
-        super().__init__(name, node, module_ref, *args, **kwargs)
-        self._source_module = source_module
-        self._remote_name = remote_name
-
-    @override
-    @property
-    def source_module(self) -> str | None:
-        return self._source_module
-
-    @override
-    @property
-    def remote_name(self) -> str | None:
-        return self._remote_name
-
-
 class UnresolvedBinding(NameBinding):
     """
     Represents the usage of a name with no local definition, import, or builtin found anywhere in

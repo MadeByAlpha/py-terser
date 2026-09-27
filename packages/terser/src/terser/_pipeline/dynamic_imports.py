@@ -20,6 +20,7 @@ from alpha93.commons.types import any_object
 from terser.ast import ast, ref
 
 from .resolver.binding import BuiltinBinding, ImportBinding
+from .resolver.util import scope_ref_global
 
 if __debug__ and __import__("typing").TYPE_CHECKING:
     from collections.abc import Callable
@@ -249,6 +250,22 @@ def __assigned_once(call: ast.Call) -> list[ast.Name]:
     if stores != [stmt.targets[0]] or isinstance(binding, ImportBinding):
         return []
     return loads
+
+
+def returned_module(call: ast.Call) -> str | None:
+    """
+    The dotted path of the module `call` evaluates to, if it's a dynamic import of literals (the
+    top package for `__import__("a.b")`, `a.b` for `importlib.import_module("a.b")`). Unlike
+    `find`, this needs no earlier pass: it works on any bound call, for transforms that run before
+    `find` does.
+    """
+
+    if (callee := __callee(call)) is None:
+        return None
+
+    found = DynamicImport(call, callee)
+    (__parse_dunder_import if callee.is_dunder else __parse_importlib_import)(scope_ref_global(call), found)
+    return found.returned
 
 
 def find(module: ast.Module) -> None:
