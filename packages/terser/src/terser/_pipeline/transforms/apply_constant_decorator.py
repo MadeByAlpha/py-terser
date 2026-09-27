@@ -4,6 +4,7 @@ from terser.ast import ast
 from terser.config import TransformConfig
 from terser.utils.hints import is_hinted
 from terser.utils.imports import qualified_name
+from ..resolver import forget
 from ._suite import SuiteTransformer, TransformerFlag
 
 
@@ -51,8 +52,10 @@ class ApplyConstantDecorator(SuiteTransformer):
         for node in node_list:
             node = self.visit(node)
 
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(self._is_marked(d) for d in node.decorator_list):
-                node.decorator_list = [d for d in node.decorator_list if not self._is_marked(d)]
+            # decorators apply bottom-up: only the outermost one is applied to what the others made
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.decorator_list and self._is_marked(node.decorator_list[0]):
+                forget(node.decorator_list[:1])
+                node.decorator_list = node.decorator_list[1:]
                 result.append(node)
                 result.append(self.add_child(
                     ast.Assign(
