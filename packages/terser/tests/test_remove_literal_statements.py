@@ -47,3 +47,18 @@ def test_docstrings_left_to_remove_docstrings(source):
 ])
 def test_docstrings_kept_when_used(source, expected):
     assert_code(apply(source, with_docstrings()), expected)
+
+
+@pytest.mark.parametrize("source,expected", [
+    # pydantic's `use_attribute_docstrings` reads these back from the source
+    (
+        'from terser_hints import preserve_docstring\n@preserve_docstring\nclass A:\n    """doc"""\n    x: int = 1\n    """x doc"""\n    y = 2\n    """y doc"""\n    "stray"\n',
+        'from terser_hints import preserve_docstring\n@preserve_docstring\nclass A:\n    """doc"""\n    x: int = 1\n    """x doc"""\n    y = 2\n    """y doc"""\n',
+    ),
+    (
+        'class A:\n    x: int = 1\n    """x doc"""\n',
+        'class A:\n    x: int = 1\n',
+    ),
+])
+def test_attribute_docstrings_kept_under_preserve_docstring(source, expected):
+    assert_code(apply(source, with_docstrings()), expected)

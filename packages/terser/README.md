@@ -141,7 +141,7 @@ multiple values, and can be repeated.
 | `--convert-to-inline`            | `True`  | `if c: f()` → `c and f()`, `if c: f()` / `else: g()` → `f() if c else g()`     |
 | `--convert-to-lambda`            | `True`  | `def f(x): return e` → `f = lambda x: e` (not for decorated or annotated functions, or ones `--preserve-locals` names) |
 | `--remove-dummy-assignments`     | `True`  | Remove `x = x` where `x` is bound elsewhere too, outside a class body         |
-| `--remove-docstrings`            | `False` | Remove docstrings, except under `@terser_hints.preserve_docstring`, and ones that may be read (`__doc__`) |
+| `--remove-docstrings`            | `False` | Remove docstrings, except under `@terser_hints.preserve_docstring` (a class keeps its attribute docstrings too), and ones that may be read (`__doc__`) |
 | `--also-modules`                 | `False` | With `--remove-docstrings`, remove module docstrings too                      |
 | `--cleanup-local-imports`        | `True`  | Remove unused imports in functions and classes                                |
 | `--respect-all`                  | `False` | With `--cleanup-local-imports`, remove unused module-level imports not in `__all__` too |
@@ -213,7 +213,7 @@ terser src/ --output build/ --preserve-type-checking 'anyio' 'anyio.*'
 ### Tree-shaking
 
 When `--entry` is given, modules that are not reachable (through imports) from any entry module are dropped from the
-output. Entry modules are never renamed by `--rename-modules`.
+output. Entry modules, and the packages they are in, are never renamed by `--rename-modules`.
 
 Both follow imports statically. `__import__()` and `importlib.import_module()` count as imports when the module is
 named by literals (a relative name too, against a literal package or `__package__`): tree-shaking keeps what they
