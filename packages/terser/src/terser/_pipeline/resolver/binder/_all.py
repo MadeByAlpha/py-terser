@@ -21,13 +21,17 @@ def __is_assign(node: ast.AST) -> TypeIs[ast.Assign | ast.AnnAssign | ast.AugAss
     return False
 
 def resolve_all(module: ast.Module):
-    names = set[str]()
+    # None when the module doesn't assign `__all__`: every public name is exported then
+    names: set[str] | None = None
 
     for node in ast.iter_child_nodes(module):
         if not __is_assign(node):
             continue
 
-        if not isinstance(node.value, ast.List):
+        if names is None:
+            names = set()
+
+        if not isinstance(node.value, (ast.List, ast.Tuple)):
             continue
 
         for el in node.value.elts:

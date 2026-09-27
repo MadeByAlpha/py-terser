@@ -3,6 +3,30 @@ from enum import IntEnum
 from re import compile as _re
 
 
+def _raw_literal(value: str) -> str | None:
+    """
+    Render `value` as a raw string literal (`r"..."`/`r'...'`), or `None` if it can't be
+    one - `repr()` always escapes backslashes, which is longer than the source for
+    backslash-heavy strings like regex patterns (`r"some\\.raw\\.strings"`).
+
+    A raw string can't represent: non-printable characters (no escape sequences at all
+    in raw mode), a trailing odd run of backslashes (would escape the closing quote), or
+    a value containing both quote characters (nothing left to delimit it with).
+    """
+    if not value.isprintable():
+        return None
+
+    trailing_backslashes = len(value) - len(value.rstrip('\\'))
+    if trailing_backslashes % 2 == 1:
+        return None
+
+    for quote in ("'", '"'):
+        if quote not in value:
+            return f"r{quote}{value}{quote}"
+
+    return None
+
+
 class TokenTypes(IntEnum):
     NoToken = 0
     Identifier = 1
@@ -142,6 +166,10 @@ class TokenPrinter:
     def stringliteral(self, value):
         """Add a string literal to the output code."""
         s = repr(value)
+
+        raw = _raw_literal(value)
+        if raw is not None and len(raw) < len(s):
+            s = raw
 
         if len(s) > 0 and s[0].isalpha() and self.previous_token in [TokenTypes.Identifier, TokenTypes.Keyword, TokenTypes.SoftKeyword]:
             self.delimiter(' ')

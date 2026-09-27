@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import operator
 from typing import TYPE_CHECKING, override
 
 from terser.ast import ast, compare_ast, is_constant_node, ref
@@ -27,6 +28,9 @@ def _is_unshadowed_builtin(node, name: str) -> bool:
         return False
 
     return isinstance(binding, BuiltinBinding) and binding.name == name and not binding.is_redefined()
+
+
+_TYPE_CHECKING_NAMES = ('typing.TYPE_CHECKING', 'typing_extensions.TYPE_CHECKING')
 
 
 def is_provably_bool(node) -> bool:
@@ -219,9 +223,43 @@ class FoldConstants(SuiteTransformer):
         _reparent(value, node)
         return value
 
+    def _fold_version_info(self, node):
+        if self._config.target_version is None or len(node.ops) != 1:
+            return None
+
+        ops = {
+            ast.Lt: operator.lt, ast.LtE: operator.le, ast.Gt: operator.gt,
+            ast.GtE: operator.ge, ast.Eq: operator.eq, ast.NotEq: operator.ne,
+        }
+        op = ops.get(type(node.ops[0]))
+        if op is None:
+            return None
+
+        left, right = node.left, node.comparators[0]
+        swapped = qualified_name(left) != 'sys.version_info'
+        if swapped:
+            left, right = right, left
+
+        if qualified_name(left) != 'sys.version_info' or not isinstance(right, ast.Tuple):
+            return None
+
+        literal: list[int] = []
+        for elt in right.elts:
+            if not is_constant_node(elt, ast.Num) or not isinstance(elt.value, int):
+                return None
+            literal.append(elt.value)
+
+        target = tuple(self._config.target_version[:len(literal)])
+        a, b = (tuple(literal), target) if swapped else (target, tuple(literal))
+        return ast.NameConstant(value=op(a, b))
+
     def visit_Compare(self, node):
         node.left = self.visit(node.left)
         node.comparators = [self.visit(c) for c in node.comparators]
+
+        if (new_node := self._fold_version_info(node)) is not None:
+            node_ref = ref(node)
+            return self.add_child(new_node, node_ref.parent, node_ref.namespace)
 
         if len(node.ops) != 1 or not isinstance(node.ops[0], (ast.Eq, ast.NotEq, ast.Is, ast.IsNot)):
             return node
@@ -250,17 +288,26 @@ class FoldConstants(SuiteTransformer):
         return self.add_child(new_node, node_ref.parent, node_ref.namespace)
 
     def visit_Name(self, node):
-        if node.id != '__debug__' or not _is_unshadowed_builtin(node, '__debug__'):
+        if not isinstance(node.ctx, ast.Load):
+            # a Store/Del context is the binding's own definition site, not a usage to
+            # fold - e.g. the `x` in `x = __import__("typing").TYPE_CHECKING` itself
             return node
 
-        new_node = ast.NameConstant(value=self._config.optimize < 1)
+        if node.id == '__debug__' and _is_unshadowed_builtin(node, '__debug__'):
+            new_node = ast.NameConstant(value=self._config.optimize < 1)
+        elif qualified_name(node) in _TYPE_CHECKING_NAMES:
+            # False at runtime - only ever True for static type checkers
+            new_node = ast.NameConstant(value=False)
+        else:
+            return node
+
         node_ref = ref(node)
         return self.add_child(new_node, node_ref.parent, node_ref.namespace)
 
     def visit_Attribute(self, node):
         node.value = self.visit(node.value)
 
-        if qualified_name(node) != 'typing.TYPE_CHECKING':
+        if qualified_name(node) not in _TYPE_CHECKING_NAMES:
             return node
 
         new_node = ast.NameConstant(value=False)

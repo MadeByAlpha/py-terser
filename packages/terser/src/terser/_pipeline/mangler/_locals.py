@@ -234,6 +234,17 @@ class NameAssigner:
         scope = reservation_scope(namespace, binding)
 
         if binding.allow_rename:
+            # A binding may have already reserved its own current name in an earlier,
+            # separate pass (e.g. mangle_locals reserving every global's name so local
+            # mangling doesn't shadow it, before mangle_globals gets a turn at the same
+            # binding) - undo that self-reservation before checking availability, or
+            # `should_rename` sees its own name as "already taken" and force-renames it
+            # even when keeping it would be shorter.
+            for ns in scope:
+                ns_ref = ref(ns)
+                if hasattr(ns_ref, 'assigned_names'):
+                    ns_ref.assigned_names.discard(binding.name)
+
             name = self.available_name(scope, prefix=prefix)
 
             if should_rename(binding, name, scope, self.is_available):

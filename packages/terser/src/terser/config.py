@@ -36,6 +36,17 @@ class TransformConfig:
     passes: int = 5
     optimize: Literal[-1, 0, 1, 2] = -1
 
+    hint_modules: list[str] = field(default_factory=list)
+    """Extra dotted module paths whose members are recognized as `terser_hints` decorators
+    (e.g. `preserve_docstring`, `preserve_annotations`, `constant`), in addition to the
+    built-in `terser_hints` package"""
+
+    target_version: tuple[int, ...] | None = None
+    """Target Python version (e.g. `(3, 12)`) the minified output will run under - folds
+    `sys.version_info <op> (...)` comparisons against a literal tuple to a constant bool.
+    `None` (the default) leaves these comparisons untouched, since the runtime version
+    isn't known."""
+
     contracts: list[str] = field(default_factory=lambda: [
         "typing.cast(_, value) -> value",
         "typing.assert_never(_) -> None",
@@ -138,10 +149,19 @@ class TransformConfig:
     """Convert positional-only arguments to normal arguments"""
 
     remove_dunder_all: bool = False
-    """Remove the top-level `__all__` assignment. Unsafe across module boundaries: another
-    module doing `from this_module import *` relies on `__all__` (falling back to "no names"
-    when every top-level name is prefixed with an underscore), which a per-module pass run
-    before project-wide linking has no way to see."""
+    """Remove the top-level `__all__` assignment everywhere. Unsafe across module boundaries:
+    another module doing `from this_module import *` relies on `__all__` (falling back to "no
+    names" when every top-level name is prefixed with an underscore), which a per-module pass
+    run before project-wide linking has no way to see. See `remove_dunder_all_modules` for a
+    safer, per-module opt-in instead of this project-wide switch."""
+
+    remove_dunder_all_modules: list[str] = field(default_factory=list)
+    """Glob patterns (matched against each module's dotted path) whitelisting specific modules
+    where `__all__` removal is safe (e.g. an app entry point that's never `from x import *`-ed
+    elsewhere), without enabling `remove_dunder_all` project-wide. Opt-in per module, unlike
+    `preserve_locals`/`preserve_globals` (which are opt-out from a rename-everything default),
+    since `__all__` can be relied on internally within a module too (e.g. `__all__.append(...)`,
+    already guarded against separately - see `RemoveAll`)."""
 
 
 # TODO: frozen=True

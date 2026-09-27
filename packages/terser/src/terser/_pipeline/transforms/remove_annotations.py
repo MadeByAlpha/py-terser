@@ -4,6 +4,7 @@ from typing import override
 
 from terser.ast import ast, ref
 from terser.config import RemoveAnnotationOptions, TransformConfig
+from terser.utils.hints import is_hinted
 from terser.utils.imports import qualified_name
 from ._suite import SuiteTransformer, TransformerFlag
 
@@ -36,14 +37,16 @@ class RemoveAnnotations(SuiteTransformer):
         self._options = RemoveAnnotationOptions() if isinstance(self._config.remove_annotations, bool) else self._config.remove_annotations
 
     def visit_FunctionDef(self, node):
-        node.args = self.visit_arguments(node.args)
+        preserved = is_hinted(node.decorator_list, "preserve_annotations", self._config)
+
+        node.args = node.args if preserved else self.visit_arguments(node.args)
         node.body = self.suite(node.body, parent=node)
         node.decorator_list = [self.visit(d) for d in node.decorator_list]
 
         if hasattr(node, 'type_params') and node.type_params is not None:
             node.type_params = [self.visit(t) for t in node.type_params]
 
-        if hasattr(node, 'returns') and self._options.remove_return_annotations and not _is_annotated(node.returns):
+        if hasattr(node, 'returns') and self._options.remove_return_annotations and not preserved and not _is_annotated(node.returns):
             node.returns = None
 
         return node
@@ -121,7 +124,7 @@ class RemoveAnnotations(SuiteTransformer):
         # is this a class attribute or a variable?
         node_ref = ref(node)
         if isinstance(node_ref.parent, ast.ClassDef):
-            if not self._options.remove_attribute_annotations:
+            if not self._options.remove_attribute_annotations or is_hinted(node_ref.parent.decorator_list, "preserve_annotations", self._config):
                 return node
         else:
             if not self._options.remove_variable_annotations:

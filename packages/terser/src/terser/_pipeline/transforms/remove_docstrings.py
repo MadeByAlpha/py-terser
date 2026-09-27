@@ -2,7 +2,7 @@ from typing import override
 
 from terser.ast import ast, is_constant_node
 from terser.config import RemoveDocstringOptions, TransformConfig
-from terser.utils.imports import qualified_name
+from terser.utils.hints import is_hinted
 from ._suite import SuiteTransformer, TransformerFlag
 
 
@@ -26,7 +26,7 @@ class RemoveDocstrings(SuiteTransformer):
         return bool(body) and isinstance(body[0], ast.Expr) and is_constant_node(body[0].value, ast.Str)
 
     def _preserved(self, decorator_list) -> bool:
-        return any(qualified_name(d) == "terser_hints.preserve_docstring" for d in decorator_list)
+        return is_hinted(decorator_list, "preserve_docstring", self._config)
 
     def _strip_docstring(self, node):
         node.body = node.body[1:]

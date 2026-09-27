@@ -288,6 +288,16 @@ class Binding(ABC):
         if reserved is not None:
             self._reserved = reserved
 
+    def remove_reference(self, node: ast.AST):
+        """
+        Drop a reference from this binding, e.g. when a transform deletes the node that
+        made it (a stripped decorator, a removed branch) - otherwise the stale entry keeps
+        the binding looking used to reference-count-based checks (unused-import cleanup,
+        safe-to-drop-definition checks) even after nothing in the tree points to it anymore.
+        """
+
+        self._references.remove(node)
+
     @abstractmethod
     def should_rename(self, new_name: str) -> bool:
         """
@@ -345,7 +355,10 @@ class NameBinding(Binding):
         additional_bytes = self.additional_byte_cost()
         rename_cost = (old_mentions * len(self.name)) + (new_mentions * len(new_name)) + additional_bytes
 
-        return rename_cost <= current_cost
+        # Strict improvement only - a tie is no gain, and leaving the original name alone
+        # keeps it free for whatever *other* binding would otherwise need to fall back to a
+        # longer candidate to avoid colliding with a pointless same-length rename.
+        return rename_cost < current_cost
 
     @override
     def disallow_rename(self):
@@ -384,7 +397,7 @@ class NameBinding(Binding):
                 if (vararg := node.vararg) and (vararg.arg == self.name) and not getattr(node, "vararg_renamed", False):
                     vararg.arg = new_name
                     setattr(node, "vararg_renamed", True)
-                if (kwarg := node.vararg) and (kwarg.arg == self.name) and not getattr(node, "kwarg_renamed", False):
+                if (kwarg := node.kwarg) and (kwarg.arg == self.name) and not getattr(node, "kwarg_renamed", False):
                     kwarg.arg = new_name
                     setattr(node, "kwarg_renamed", True)
 
@@ -478,6 +491,52 @@ class ImportBinding(NameBinding):
         """
         ref = self._module_ref.import_targets.get(self)
         return ref.path if ref is not None else None
+
+    @property
+    def remote_name(self) -> str | None:
+        """
+        The name this binding refers to *in its source module*, when that's not the same as
+        the local (possibly aliased, possibly later mangled) `.name` - e.g. `"override"` for
+        `from typing import override as ov`. `None` for a plain `import x [as y]` (the binding
+        names the module itself, not a symbol within it) or a wildcard-derived binding, where
+        `.name` is already the right thing to qualify `source_module` with.
+        """
+        if isinstance(self.node, ast.alias) and isinstance(ref(self.node).parent, ast.ImportFrom):
+            return self.node.name
+
+        return None
+
+
+class DynamicImportBinding(ImportBinding):
+    """
+    An `ImportBinding` synthesized from a dynamic-import expression - `__import__("mod")` or
+    `__import__("mod").attr` - assigned to a name, rather than a literal `import`/`from import`
+    statement. Lets `qualified_name` and the project-wide mangler treat these the same as a
+    real import: renamed/tracked consistently, and recognized by typing-aware transforms
+    (`TYPE_CHECKING` folding, `@typing.override` stripping, etc).
+
+    `target`/`target_name` (cross-module linking) are never populated here - resolving which
+    project module a dynamic import call refers to isn't part of `resolve_imports`'s static
+    import graph, so cross-module linking is out of scope for these for now.
+
+    See `terser._pipeline.resolver.dynamic_import` for the recognizer this is built from -
+    add new dynamic-import forms there, not here.
+    """
+
+    def __init__(self, name, node, module_ref: ModuleRef, source_module: str, remote_name: str | None, *args, **kwargs):
+        super().__init__(name, node, module_ref, *args, **kwargs)
+        self._source_module = source_module
+        self._remote_name = remote_name
+
+    @override
+    @property
+    def source_module(self) -> str | None:
+        return self._source_module
+
+    @override
+    @property
+    def remote_name(self) -> str | None:
+        return self._remote_name
 
 
 class UnresolvedBinding(NameBinding):

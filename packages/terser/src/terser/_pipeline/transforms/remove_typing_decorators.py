@@ -1,6 +1,6 @@
 from typing import override
 
-from terser.ast import ast
+from terser.ast import ast, ref
 from terser.config import TransformConfig
 from terser.utils.imports import qualified_name
 from ._suite import SuiteTransformer, TransformerFlag
@@ -8,8 +8,30 @@ from ._suite import SuiteTransformer, TransformerFlag
 _REMOVABLE_NAMES = ("typing.override", "typing_extensions.override", "typing.final", "typing_extensions.final")
 
 
+def _unreference(decorator: ast.expr):
+    # Drop the binding reference this decorator was holding (the root `Name` of a bare
+    # `override` or a dotted `typing.override`), so unused-import cleanup can see it's
+    # actually unused now that the decorator using it is gone.
+    node = decorator
+    while isinstance(node, ast.Attribute):
+        node = node.value
+
+    if isinstance(node, ast.Name):
+        try:
+            ref(node).binding.remove_reference(node)
+        except AttributeError:
+            pass
+
+
 def _strip(decorator_list: list[ast.expr]) -> list[ast.expr]:
-    return [d for d in decorator_list if qualified_name(d) not in _REMOVABLE_NAMES]
+    kept = []
+    for d in decorator_list:
+        if qualified_name(d) in _REMOVABLE_NAMES:
+            _unreference(d)
+        else:
+            kept.append(d)
+
+    return kept
 
 
 class RemoveTypingDecorators(SuiteTransformer):

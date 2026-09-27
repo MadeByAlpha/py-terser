@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from terser.ast import ModuleRef, ast, ref
 from ..binding import Binding, BuiltinBinding, UnresolvedBinding
-from ..util import scope_ref_global, scope_ref_nonlocal
+from ..util import is_python_mangled_private, scope_ref_global, scope_ref_nonlocal
 from ...parser._scope import ScopeResolver
 
 if __debug__ and __import__("typing").TYPE_CHECKING:
@@ -44,8 +44,10 @@ def __get_binding(name: str, namespace_ref: ScopedNode) -> Binding:
 def __attr_get_binding(name: str, namespace: ScopedNode) -> Binding:
     binding = __get_binding(name, namespace)
 
-    if isinstance(namespace.ast, ast.ClassDef):
-        # This name will become an attribute of a class, so it can't be renamed
+    if isinstance(namespace.ast, ast.ClassDef) and not is_python_mangled_private(name):
+        # This name will become an attribute of a class, so it can't be renamed -
+        # unless Python's own compiler already private-mangles it (`__foo`), in which
+        # case it's already unreachable from outside under its literal spelling.
         binding.disallow_rename()
 
     return binding

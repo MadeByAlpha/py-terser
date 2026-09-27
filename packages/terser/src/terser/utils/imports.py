@@ -1,5 +1,6 @@
 from terser.ast import ast, ref
 from .._pipeline.resolver.binding import ImportBinding
+from .._pipeline.resolver.dynamic_import import match_dynamic_import_call
 
 
 def qualified_name(node: ast.expr, /) -> str | None:
@@ -7,7 +8,10 @@ def qualified_name(node: ast.expr, /) -> str | None:
     Resolve a `Name` or dotted `Attribute` expression to the dotted path of the
     import it refers to (e.g. `cast` after `from typing import cast` or
     `typing.cast` both resolve to `"typing.cast"`), using the already-computed
-    name bindings. Returns None if the root name isn't an import, or its
+    name bindings. Also recognizes an inline dynamic-import call directly (e.g.
+    `__import__("typing").TYPE_CHECKING`), with no binding involved.
+
+    Returns None if the root name isn't an import (or dynamic-import call), or its
     binding has no name.
     """
 
@@ -16,6 +20,9 @@ def qualified_name(node: ast.expr, /) -> str | None:
         attrs.append(node.attr)
         node = node.value
     attrs.reverse()
+
+    if (source_module := match_dynamic_import_call(node)) is not None:
+        return f"{source_module}.{'.'.join(attrs)}" if attrs else source_module
 
     if not isinstance(node, ast.Name):
         return None
@@ -37,8 +44,9 @@ def qualified_name(node: ast.expr, /) -> str | None:
 
     # `attrs` non-empty means this was a dotted access off an `import x` binding
     # (e.g. `typing.cast`) - the module identity comes from source_module, not
-    # the (possibly aliased) local name. With no attrs, this is a bare `Name`
-    # from a `from x import y` binding, where binding.name is the local
-    # (possibly aliased) symbol name.
-    tail = ".".join(attrs) if attrs else binding.name
+    # the (possibly aliased) local name. With no attrs, this is a bare `Name` - use
+    # `remote_name` (the name as written in the source module) when the binding has
+    # one (e.g. `override` for `from typing import override as ov`), since `.name` may
+    # be a local alias or a later-mangled name that means nothing in the source module.
+    tail = ".".join(attrs) if attrs else (binding.remote_name or binding.name)
     return f"{source_module}.{tail}"

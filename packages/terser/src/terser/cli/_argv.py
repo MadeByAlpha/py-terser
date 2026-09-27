@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 from alpha93.commons.pydantic import dataclasses as pydantic_dataclasses
 from pydantic import BaseModel, ConfigDict, Field
 
-from terser.config import TransformConfig, RemoveAnnotationOptions
+from terser.config import TransformConfig, RemoveAnnotationOptions, RemoveDocstringOptions
 from ._argparse import MutuallyExclusive
 
 if __debug__ and TYPE_CHECKING:
@@ -139,14 +139,26 @@ class TerserParsedArguments(TerserArguments):
             **_given(namespace, (f.name for f in dataclasses.fields(RemoveAnnotationOptions)))
         )
 
+        remove_docstrings = RemoveDocstringOptions(
+            **_given(namespace, (f.name for f in dataclasses.fields(RemoveDocstringOptions)))
+        )
+
+        # `--target-version` accumulates into a list: an empty one isn't a meaningful version to
+        # fold `sys.version_info` comparisons against, so it leaves folding disabled (None)
+        target_version = getattr(namespace, "target_version", None)
+
         # every other TransformConfig field maps 1:1 to an option of the same name
+        special = ("remove_annotations", "remove_docstrings", "target_version")
         transform_options = TransformConfig(**_given(
             namespace,
-            (f.name for f in dataclasses.fields(TransformConfig) if f.name != "remove_annotations"),
+            (f.name for f in dataclasses.fields(TransformConfig) if f.name not in special),
         ), remove_annotations=(
             (remove_annotations if remove_annotations != RemoveAnnotationOptions() else True)
             if namespace.remove_annotations else False
-        ))
+        ), remove_docstrings=(
+            (remove_docstrings if remove_docstrings != RemoveDocstringOptions() else True)
+            if namespace.remove_docstrings else False
+        ), target_version=tuple(target_version) if target_version else None)
 
         mangling_options = ManglingOptions(**_given(namespace, ManglingOptions.model_fields))
 

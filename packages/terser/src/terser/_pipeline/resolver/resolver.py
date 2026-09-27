@@ -4,8 +4,9 @@ import builtins
 from typing import TYPE_CHECKING, override
 
 from terser.ast import NodeVisitor, ast, ref
-from .binding import Binding, ImportBinding, NameBinding
-from .util import arg_rename_in_place, scope_ref_global
+from .binding import Binding, DynamicImportBinding, ImportBinding, NameBinding
+from .dynamic_import import match_dynamic_import_value
+from .util import arg_rename_in_place, is_python_mangled_private, scope_ref_global
 
 if __debug__ and TYPE_CHECKING:
     from collections.abc import Callable
@@ -73,8 +74,10 @@ class NameResolver(NodeVisitor):
             # This is actually a syntax error - but we want the same syntax error after minifying!
             binding.disallow_rename()
 
-        if isinstance(namespace, ast.ClassDef):
-            # This name will become an attribute of the class, so it can't be renamed
+        if isinstance(namespace, ast.ClassDef) and not is_python_mangled_private(name):
+            # This name will become an attribute of the class, so it can't be renamed -
+            # unless Python's own compiler already private-mangles it (`__foo`), in which
+            # case it's already unreachable from outside under its literal spelling.
             binding.disallow_rename()
 
         return binding
@@ -89,6 +92,27 @@ class NameResolver(NodeVisitor):
 
         if isinstance(node.ctx, (ast.Store, ast.Del)):
             self.__get_binding(node.id, namespace).add_reference(node)
+
+    @override
+    def visit_Assign(self, node: ast.Assign):
+        match = None
+        target = node.targets[0] if len(node.targets) == 1 else None
+        if isinstance(target, ast.Name):
+            match = match_dynamic_import_value(node.value)
+
+        if match is None:
+            self.generic_visit(node)
+            return
+
+        source_module, remote_name = match
+        namespace = ref(target).namespace
+        assert isinstance(target, ast.Name)
+
+        if target.id not in ref(namespace).nonlocals:
+            factory = lambda name: DynamicImportBinding(name, target, self.module_ref, source_module, remote_name)
+            self.__get_binding(target.id, namespace, factory).add_reference(target)
+
+        self.visit(node.value)
 
     @override
     def visit_ClassDef(self, node: ast.ClassDef):

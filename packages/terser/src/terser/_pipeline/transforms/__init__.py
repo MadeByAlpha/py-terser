@@ -30,6 +30,7 @@ from .convert_typing_constructors import ConvertTypingConstructors
 from .convert_dynamic_attribute_access import ConvertDynamicAttributeAccess
 from .remove_dead_blocks import RemoveDeadBlocks
 from .remove_all import RemoveAll
+from .apply_constant_decorator import ApplyConstantDecorator
 
 
 __transforms__ = [
@@ -46,11 +47,12 @@ __transforms__ = [
     RemoveExplicitReturnNone,
     ConvertEarlyExits,
     ConvertToInline,
-    ConvertToLambda,
 
     # FLAGS = REQUIRES_IMPORT_RESOLVE
     Contracts,
+    ApplyConstantDecorator,
     RemoveAnnotations,
+    ConvertToLambda,
     RemoveDummyAssignments,
     RemoveDocstrings,
     CleanupLocalImports,
