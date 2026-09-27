@@ -51,7 +51,9 @@ class CleanupLocalImports(SuiteTransformer):
     def suite(self, node_list, parent):
         result = []
         for stmt in node_list:
-            if isinstance(stmt, (ast.Import, ast.ImportFrom)):
+            if isinstance(stmt, ast.ImportFrom) and stmt.module == '__future__':
+                pass  # a compiler directive, used or not (`annotations` keeps them unevaluated)
+            elif isinstance(stmt, (ast.Import, ast.ImportFrom)):
                 kept = self._clean_alias_list(stmt, in_module_scope=ref(stmt).namespace is self._module)
                 # or the bindings keep the aliases as references, which e.g. `ConvertToLambda` then
                 # moves with them into a lambda the aliases are not in

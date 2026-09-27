@@ -20,6 +20,9 @@ def test_cleanup_local_imports(source, expected):
 @pytest.mark.parametrize("source,expected", [
     ("import os\nimport sys\n__all__ = ['x']\nx = sys", "import sys\n__all__ = ['x']\nx = sys"),
     ("import os\n__all__ = ['os']", "import os\n__all__ = ['os']"),
+    # a compiler directive: annotations stay unevaluated strings
+    ("from __future__ import annotations\n__all__ = ['x']\nx: Undefined = 1", "from __future__ import annotations\n__all__ = ['x']\nx: Undefined = 1"),
+    ("from __future__ import annotations as _a\nx: Undefined = 1", "from __future__ import annotations as _a\nx: Undefined = 1"),
 ])
 def test_respect_all(source, expected):
     config = only("cleanup_local_imports", "respect_all")
