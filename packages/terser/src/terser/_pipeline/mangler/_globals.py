@@ -139,6 +139,12 @@ def mangle_globals(project: dict[str, ModuleRef], rename_globals: bool = False, 
     for module_ref in project.values():
         add_assigned(module_ref.ast)
 
+    # importing a submodule sets it as an attribute of its package, replacing a global of the same name
+    for dotted in project:
+        parent, _, leaf = dotted.rpartition('.')
+        if parent in project:
+            ref(project[parent].ast).assigned_names.add(leaf)
+
     assigner = NameAssigner()
     pairs = [
         (module_ref.ast, binding)

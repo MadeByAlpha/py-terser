@@ -3,6 +3,7 @@ from __future__ import annotations
 from terser.ast import NodeVisitor, ast, ref, is_constant_node
 from terser.ast.ref._node import NodeRef
 from ..resolver.binding import Binding
+from ..transforms.fold_type_checking import is_type_checking
 from .util import insert
 
 
@@ -216,6 +217,14 @@ class HoistLiterals(NodeVisitor):
         binding = HoistedBinding(node)
         self._hoisted[hoisted_value] = binding
         return binding
+
+    def visit_If(self, node):
+        # code reading `TYPE_CHECKING` back parses the source of what it guards (anyio's lazy importer)
+        if getattr(ref(self.module), 'preserve_type_checking', False) and any(
+            is_type_checking(n) for n in ast.walk(node.test)
+        ):
+            return
+        self.generic_visit(node)
 
     def visit_Str(self, node):
 

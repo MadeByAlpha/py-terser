@@ -128,3 +128,30 @@ class FoldTypeChecking(SuiteTransformer):
         if node.attr == 'TYPE_CHECKING' and isinstance(node.ctx, ast.Load) and _dynamic(node.value) and qualified_name(node) in _NAMES:
             return self.__fold(node)
         return self.generic_visit(node)
+
+
+def is_type_checking(node: ast.expr) -> bool:
+    """If `node` reads `typing.TYPE_CHECKING` (or `typing_extensions`'), by any of the ways `FoldTypeChecking` folds"""
+
+    if isinstance(node, ast.Name):
+        binding = _binding(node)
+        return _imports(binding, 'TYPE_CHECKING', ast.ImportFrom) or qualified_name(node) in _NAMES
+    if isinstance(node, ast.Attribute) and node.attr == 'TYPE_CHECKING':
+        return qualified_name(node) in _NAMES
+    return False
+
+
+def keep_type_checking(module: ast.Module) -> None:
+    """
+    Keep the names a module marked `preserve_type_checking` reads `TYPE_CHECKING` by: the code
+    reading it back (anyio's lazy importer) looks for `TYPE_CHECKING` (or `typing.TYPE_CHECKING`)
+    in the source, and deletes it from the module's globals by name.
+    """
+
+    for node in ast.walk(module):
+        if not is_type_checking(node):
+            continue
+        name = node if isinstance(node, ast.Name) else node.value
+        if isinstance(name, ast.Name) and (binding := _binding(name)) is not None:
+            binding.disallow_rename()
+            binding.mark_preserved()

@@ -375,3 +375,69 @@ def test_annotation_readers_across_modules(tmp_path):
     config = TransformConfig(remove_annotations=RemoveAnnotationOptions(remove_attribute_annotations=True))
     minify(root, output=out, config=config, entry={"main"}, rename_globals=True, rename_modules=True)
     assert run_py("main.py", cwd=out).stdout == "name='a' price=3\n"
+
+
+LAZY = {
+    "main.py": "import lazy\nprint(lazy.greeting, lazy.farewell)\n",
+    "lazy/__init__.py": """\
+from typing import TYPE_CHECKING
+
+from ._importer import install
+
+if TYPE_CHECKING or not install():
+    from ._impl import greeting as greeting
+    from ._impl import farewell as farewell
+    ALIASES = {"hello": "greeting", "hi": "greeting", "bye": "farewell", "later": "farewell"}
+""",
+    # like anyio's: reads the imports `TYPE_CHECKING` guards back from the source
+    "lazy/_importer.py": """\
+import ast
+import inspect
+import sys
+from importlib import import_module
+
+
+def install():
+    module_globals = sys._getframe(1).f_globals
+    module = sys.modules[module_globals["__name__"]]
+    lazy = {}
+    for node in ast.parse(inspect.getsource(module)).body:
+        if isinstance(node, ast.If) and isinstance(node.test, ast.BoolOp) and getattr(node.test.values[0], "id", None) == "TYPE_CHECKING":
+            for stmt in node.body:
+                if isinstance(stmt, ast.ImportFrom):
+                    for alias in stmt.names:
+                        lazy[alias.asname or alias.name] = ("." * stmt.level + stmt.module, alias.name)
+                else:
+                    if not all(isinstance(key, ast.Constant) for key in (*stmt.value.keys, *stmt.value.values)):
+                        raise TypeError("not a literal")
+    del module_globals["TYPE_CHECKING"]
+
+    def __getattr__(name):
+        module_name, attr = lazy[name]
+        return getattr(import_module(module_name, module_globals["__name__"]), attr)
+
+    module_globals["__getattr__"] = __getattr__
+    return True
+""",
+    "lazy/_impl.py": "greeting = 'hello'\nfarewell = 'bye'\n",
+}
+
+
+@pytest.mark.parametrize("options", [{}, {"rename_globals": True, "rename_modules": True}])
+def test_preserve_type_checking_for_a_lazy_importer(tmp_path, options):
+    root = write_tree(tmp_path / "src", LAZY)
+    out = tmp_path / "out"
+    minify(root, output=out, entry={"main"}, preserve_type_checking={"lazy"}, **options)
+    assert run_py("main.py", cwd=out).stdout == "hello bye\n"
+
+
+def test_package_global_and_submodule_names_stay_apart(tmp_path):
+    # importing `pkg.sub` sets `pkg.sub`: a global of `pkg` renamed to the same name would be replaced
+    root = write_tree(tmp_path / "src", {
+        "main.py": "import pkg\nimport pkg.sub\nprint(pkg.VALUE, pkg.sub.X)\n",
+        "pkg/__init__.py": "VALUE = 'v'\n",
+        "pkg/sub.py": "X = 1\n",
+    })
+    out = tmp_path / "out"
+    minify(root, output=out, entry={"main"}, rename_globals=True, rename_modules=True)
+    assert run_py("main.py", cwd=out).stdout == "v 1\n"

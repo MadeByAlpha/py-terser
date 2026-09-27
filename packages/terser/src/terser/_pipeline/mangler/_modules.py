@@ -212,8 +212,10 @@ def mangle_modules(
         groups.setdefault(parent, []).append(dotted)
 
     new_leaf: dict[str, str] = {}
-    for members in groups.values():
-        used = set()
+    for parent, members in groups.items():
+        # importing a submodule sets it as an attribute of its package: a global of the package by
+        # the same name would be replaced by the submodule
+        used = {binding.name for binding in project[parent].bindings if binding.name} if parent in project else set()
         renamable = []
 
         for dotted in members:

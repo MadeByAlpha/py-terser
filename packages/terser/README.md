@@ -205,7 +205,8 @@ In the hatch build hook, the same goes in the keys of the tables: `preserve_loca
 
 Some code reads `TYPE_CHECKING` back at run time: anyio's lazy importer deletes it from its packages' globals, and
 parses their source for the imports under `if TYPE_CHECKING or ...`. `--fold-type-checking` would fold that block
-away, so leave it as is in the modules matching `--preserve-type-checking`:
+away, so leave it as is in the modules matching `--preserve-type-checking`: `TYPE_CHECKING` (or `typing`) keeps its
+name, and the code it guards its literals:
 
 ```shell
 terser src/ --output build/ --preserve-type-checking 'anyio' 'anyio.*'
