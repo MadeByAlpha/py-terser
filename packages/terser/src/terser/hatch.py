@@ -19,7 +19,7 @@ from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 from alpha93.progression import NullReporter, Reporter, auto_reporter
 
 from ._pipeline.path_provider import SUFFIXES
-from .config import RemoveAnnotationOptions, TransformConfig
+from .config import RemoveAnnotationOptions, TransformConfig, Config
 from .project import ProjectMinifier
 from .terser import minify_project
 
@@ -185,23 +185,18 @@ class TerserBuildHook(BuildHookInterface):
         config_opts = dict(self.config.get("config", {}))
         if isinstance(remove_annotations := config_opts.get("remove_annotations"), dict):
             config_opts["remove_annotations"] = RemoveAnnotationOptions(**remove_annotations)
-        config = TransformConfig(**config_opts)
-
-        return asyncio.run(
-            minify_project(
-                config,
-                roots,
-                reporter=reporter,
-                output=anyio.Path(out_dir),
-                hoist_literals=self.config.get("hoist_literals", True),
-                rename_locals=self.config.get("rename_locals", True),
-                preserve_locals=self.config.get("preserve_locals"),
-                rename_star_args=self._option("rename_star_args", lambda v: type(v) is bool, "a boolean", True),
-                rename_globals=self.config.get("rename_globals", False),
-                preserve_globals=self.config.get("preserve_globals"),
-                **options,
-            )
+        config = Config(
+            output_path=anyio.Path(out_dir),
+            transform=TransformConfig(**config_opts),
+            hoist_literals=self.config.get("hoist_literals", True),
+            rename_locals=self.config.get("rename_locals", True),
+            preserve_locals=self.config.get("preserve_locals", {}),
+            rename_star_args=self._option("rename_star_args", lambda v: type(v) is bool, "a boolean", True),
+            rename_globals=self.config.get("rename_globals", False),
+            preserve_globals=self.config.get("preserve_globals", {}),
         )
+
+        return asyncio.run(minify_project(roots, config, reporter, **options))
 
     def _minify_wheel(self, path: str, reporter: Reporter) -> None:
         """Minify every module of a built wheel in place (as one project), and rewrite its `RECORD`."""

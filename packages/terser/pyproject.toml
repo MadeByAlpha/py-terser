@@ -103,5 +103,6 @@ ignore = [
 ]
 
 [tool.ty.environment]
+python = "../../.venv"
 root = ["./src"]
 python-version = "3.14"     # INTENDED: due to type annotations

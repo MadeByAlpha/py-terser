@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from ._minify import minify as __minify, unparse as __unparse
+from ._minify import minify as __minify
+from ._minify import unparse as __unparse
 from ._pipeline import linker, mangler, transforms
 from ._pipeline.mangler.util import STAR_ARGS
 from .ast import DummySpec, ref
-from .config import TransformConfig
+from .config import Config, TransformConfig
 from .project import ProjectMinifier
-
 
 minify_project = ProjectMinifier.minify
 
@@ -64,13 +64,20 @@ def minify(
     """
 
     module, shebang = __minify(
-        source, DummySpec(path), config,
-        strict=strict,
-        defines=defines,
-        rename=rename_locals,
-        preserved_names=sorted(preserve_locals or ()) + ([] if rename_star_args else STAR_ARGS),
+        source,
+        DummySpec(path),
+        Config(
+            defines=defines or {},
+            strict=strict,
+            preserve_shebang=preserve_shebang,
+            prefer_single_line=prefer_single_line,
+            hoist_literals=hoist_literals,
+            rename_locals=rename_locals,
+            rename_star_args=rename_star_args,
+        ),
+        preserved_names=sorted(preserve_locals or ())
+        + ([] if rename_star_args else STAR_ARGS),
         preserved_globals=list(preserve_globals or ()),
-        hoist_literals=hoist_literals,
         preserve_type_checking=preserve_type_checking,
     )
 

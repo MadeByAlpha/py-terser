@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from os import PathLike
+from typing import Any, Literal
 
 
 @dataclass()
@@ -21,6 +22,7 @@ class RemoveAnnotationOptions:
     """Remove class attribute annotations"""
 
 
+# TODO: frozen=True
 @dataclass()
 class TransformConfig:
     passes: int = 5
@@ -73,3 +75,28 @@ class TransformConfig:
     ### mangle-sensitive transforms
     convert_posargs: bool = True
     """Convert positional-only arguments to normal arguments"""
+
+
+# TODO: frozen=True
+@dataclass()
+class Config:
+    output_path: PathLike | None = None
+
+    defines: dict[str, Any] = field(default_factory=dict)
+    workers: int | None = None
+    strict: bool = False
+
+    transform: TransformConfig = field(default_factory=TransformConfig)
+    rename_locals: bool = True
+    preserve_locals: dict[str, list[str]] = field(default_factory=dict)
+    rename_globals: bool = False
+    preserve_globals: dict[str, list[str]] = field(default_factory=dict)
+    rename_modules: bool = False
+    preserve_modules: set[str] = field(default_factory=set)
+    preserve_shebang: bool = True
+    preserve_type_checking: set[str] = field(default_factory=set)
+
+    hoist_literals: bool = True
+    rename_star_args: bool = True
+    prefer_single_line: bool = True
+    entry: set[str] = field(default_factory=set)

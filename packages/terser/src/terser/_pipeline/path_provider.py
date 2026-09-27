@@ -308,7 +308,7 @@ class PathProvider(MutableSet[str]):
 
     @override
     def __iter__(self):
-        pass
+        return iter(self.__iter)
 
     def iter(self, /) -> Iterator[spec.ModuleSpec]:
         assert self.is_resolved, "Path provider is not resolved yet"

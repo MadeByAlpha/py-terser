@@ -1,13 +1,20 @@
 from __future__ import annotations
 
-from ._pipeline import dynamic_imports, preprocessor, parser, resolver, transforms, mangler
+from ._pipeline import (
+    dynamic_imports,
+    mangler,
+    parser,
+    preprocessor,
+    resolver,
+    transforms,
+)
 from ._pipeline.printer import ModulePrinter
 from .ast import CompareError, ast, compare_ast, ref
 from .exceptions import InvalidTransformError, UnbeneficialMinificationError
 
 if __debug__ and __import__("typing").TYPE_CHECKING:
     from .ast.ref import ModuleSpec
-    from .config import TransformConfig
+    from .config import Config
 
 
 def unparse(
@@ -48,33 +55,29 @@ def unparse(
 def minify(
     source: str,
     spec: ModuleSpec | str,
+    config: Config,
     /,
-    config: TransformConfig,
     *,
-    strict: bool = False,
-    defines: dict[str, bool] | None = None,
-    rename: bool = True,
     preserved_names: list[str] | None = None,
     preserved_globals: list[str] | None = None,
-    hoist_literals: bool = True,
     preserve_type_checking: bool = False,
 ) -> tuple[ast.Module, str | None]:
-    source, shebang = preprocessor.preprocess(source, defines, strict)
-    module = parser.parse(source, spec, optimize=config.optimize)
+    source, shebang = preprocessor.preprocess(source, config.defines, config.strict)
+    module = parser.parse(source, spec, optimize=config.transform.optimize)
     ref(module).preserve_type_checking = preserve_type_checking
 
     for transform in transforms.__transforms__:
-        if not transform.is_enabled(config) or transform.FLAGS > 0:
+        if not transform.is_enabled(config.transform) or transform.FLAGS > 0:
             continue
 
-        module: ast.Module = transform(config)(module)
+        module: ast.Module = transform(config.transform)(module)
 
     resolver.resolve(module)
     resolver.bind(module)
     mangler.mark_preserved(module, preserved_names, preserved_globals)
 
-    cache = transforms.TransformCache(config)
-    for _ in range(config.passes):
+    cache = transforms.TransformCache(config.transform)
+    for _ in range(config.transform.passes):
         module, changed = cache.run(module, 1)
         if not changed:
             break
@@ -82,15 +85,15 @@ def minify(
     # before hoisting literals, which would take the module names out of the calls
     dynamic_imports.find(module)
 
-    if hoist_literals:
+    if config.hoist_literals:
         mangler.hoist_literals(module)
 
-    if rename:
-        mangler.mangle_locals(module, rename, preserved_names)
+    if config.rename_locals:
+        mangler.mangle_locals(module, config.rename_locals, preserved_names)
 
     # mangling changed the module behind the previous cache's back, so start over. FLAGS == 2
     # transforms need the module linked, which only happens after this function
-    module = transforms.TransformCache(config).run_passes(module, 1)
+    module = transforms.TransformCache(config.transform).run_passes(module, 1)
 
     # FIXME: lineno problem
     # try:

@@ -68,3 +68,6 @@ detect-string-imports = true
 [tool.ruff.lint]
 future-annotations = true
 ignore = ["E701", "E702", "E731"]
+
+[tool.ty.environment]
+python = "../../.venv"

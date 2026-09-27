@@ -9,6 +9,7 @@ import terser
 from alpha93.progression import auto_reporter
 
 from .._pipeline.mangler.util import preserved_names
+from ..config import Config
 from ..exceptions import UnbeneficialMinificationError
 from ._argparse import arguments_from_model, normalize_bool_flags
 from ._argv import TerserArguments, TerserParsedArguments, parse_preserve
@@ -89,21 +90,22 @@ def main(argv: list[str] | None = None):
 
     with auto_reporter() as reporter:
         anyio.run(partial(terser.minify_project,
-            args.transform_options,
             args.path,
+            Config(
+                output_path=__import__("anyio").Path(output) if (output := args.output_options.output) else None,
+                workers=args.workers,
+                hoist_literals=args.mangling_options.hoist_literals,
+                rename_locals=args.mangling_options.rename_locals,
+                preserve_locals=parse_preserve(args.mangling_options.preserve_locals),
+                rename_star_args=args.mangling_options.rename_star_args,
+                rename_globals=args.mangling_options.rename_globals,
+                preserve_globals=parse_preserve(args.mangling_options.preserve_globals),
+                rename_modules=args.mangling_options.rename_modules,
+                preserve_modules=args.mangling_options.preserve_modules,
+                preserve_type_checking=args.preserve_type_checking,
+                entry=args.entry,
+            ),
             reporter,
-            __import__("anyio").Path(output) if (output := args.output_options.output) else None,
-            workers=args.workers,
-            hoist_literals=args.mangling_options.hoist_literals,
-            rename_locals=args.mangling_options.rename_locals,
-            preserve_locals=parse_preserve(args.mangling_options.preserve_locals),
-            rename_star_args=args.mangling_options.rename_star_args,
-            rename_globals=args.mangling_options.rename_globals,
-            preserve_globals=parse_preserve(args.mangling_options.preserve_globals),
-            rename_modules=args.mangling_options.rename_modules,
-            preserve_modules=args.mangling_options.preserve_modules,
-            preserve_type_checking=args.preserve_type_checking,
-            entry=args.entry,
         ))
     return
 

@@ -2,13 +2,32 @@ from __future__ import annotations
 
 import warnings
 from abc import ABC, abstractmethod
-from contextlib import contextmanager
 from typing import TYPE_CHECKING, final, override
 
 if __debug__ and TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
     from types import TracebackType
     from typing import Self
+
+
+class Task:
+    def __init__(self, stage: Stage, name: str, /):
+        self.stage = stage
+        self.name = name
+
+    def __enter__(self):
+        self.stage._begin(self.name)
+        return self
+
+    def __exit__(self, exc_ty: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None):
+        self.stage._end(self.name)
+        self.stage.advance()
+
+        if exc:
+            import traceback
+
+            traceback.print_exception(exc_ty, exc, tb)
+            raise RuntimeError(f"{self.stage.name} failed while processing {self.name}") from exc
 
 
 class Stage(ABC):
@@ -38,33 +57,26 @@ class Stage(ABC):
             self.advance()
 
     @final
-    @contextmanager
-    def item(self, name: str, /) -> Iterator[None]:
+    def item(self, name: str, /) -> Task:
         """
         Work on one unit of the stage (e.g. a file) in the block: shown by name while in it, where
         the reporter shows what is being worked on, and counted as done once the block is left
         normally. Thread-safe, so units may be worked on concurrently.
         """
-
-        self._begin(name)
-        try:
-            yield
-        finally:
-            self._end(name)
-        self.advance()
+        return Task(self, name)
 
     @final
     def __enter__(self) -> Self:
         return self
 
     @final
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
-    ) -> None:
-        self._close(exc_type is None)
+    def __exit__(self, exc_ty: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None) -> None:
+        self._close(exc_ty is None)
+        if exc:
+            import traceback
+
+            traceback.print_exception(exc_ty, exc, tb)
+            raise RuntimeError(f"{self.name} failed") from exc
 
 
 class Reporter(ABC):
