@@ -494,3 +494,15 @@ def test_entry_tree_shaking_follows_native_extensions(tmp_path):
     minify(root, output=out, entry={"main"})
     assert set(read_tree(out)) >= {"main.py", "pkg/__init__.py", "pkg/_errors.py"}
     assert "pkg/_unused.py" not in read_tree(out)
+
+
+def test_typed_dict_imported_by_another_module(tmp_path):
+    # `pydantic.networks` imports `MultiHostHost`, a TypedDict `pydantic_core` itself never uses
+    root = write_tree(tmp_path / "src", {
+        "main.py": "from core import Host\nprint(Host.__name__)\n",
+        # not in `__all__`, like `MultiHostHost`
+        "core.py": "from typing import TypedDict\n__all__ = ['Url']\nUrl = str\nclass Host(TypedDict):\n    name: str\n",
+    })
+    out = tmp_path / "out"
+    minify(root, output=out, config=TransformConfig(convert_typing_constructors=True), entry={"main"})
+    assert run_py("main.py", cwd=out).stdout == "Host\n"
