@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from ._log import LogReporter
 
-if TYPE_CHECKING:
+if __debug__ and __import__("typing").TYPE_CHECKING:
     from collections.abc import Callable
     from typing import TextIO
 

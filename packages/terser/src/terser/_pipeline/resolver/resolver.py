@@ -7,7 +7,7 @@ from terser.ast import NodeVisitor, ast, ref
 from .binding import Binding, ImportBinding, NameBinding
 from .util import arg_rename_in_place, scope_ref_global
 
-if TYPE_CHECKING:
+if __debug__ and TYPE_CHECKING:
     from collections.abc import Callable
 
     from terser.ast.ref import ContainsScope, ModuleRef

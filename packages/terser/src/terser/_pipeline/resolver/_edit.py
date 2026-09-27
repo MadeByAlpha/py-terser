@@ -16,7 +16,7 @@ from .binding import BuiltinBinding, ImportBinding, UnresolvedBinding
 from .resolver import resolve_subtree
 from .util import scope_ref_global
 
-if TYPE_CHECKING:
+if __debug__ and __import__("typing").TYPE_CHECKING:
     from terser.ast.ref import ContainsScope, ScopedNode
     from .binding import Binding
 

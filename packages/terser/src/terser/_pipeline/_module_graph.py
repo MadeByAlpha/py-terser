@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from terser.ast import ast, ref
 from .resolver.binder import alias_target
 from .resolver.binding import ImportBinding
 
-if TYPE_CHECKING:
+if __debug__ and __import__("typing").TYPE_CHECKING:
     from terser.ast import ModuleRef
 
 

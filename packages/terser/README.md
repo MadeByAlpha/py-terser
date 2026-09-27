@@ -240,12 +240,6 @@ Supported keys:
 - `config` table: every `TransformConfig` field (see [Python API](#python-api)). `remove_annotations` also takes a
   table of the four `remove_*_annotations` options.
 
-With the `rollup` target of [rollup-py](https://github.com/MadeByAlpha/rollup-py), the vendored dependencies are
-minified too, together with your sources as one project. rollup-py adds them from its own hook, which always runs after
-every other hook, so the hook minifies the built wheel instead and rewrites its `RECORD` (scripts and data files are
-left untouched). The hook is configured the same way, under `[tool.hatch.build.targets.rollup.hooks.terser]` (or
-inherited from the `wheel` target).
-
 The hook shows its progress on stderr; `hatch build -q` (or `HATCH_QUIET=1`) turns it off. On a terminal, the top bar
 shows the whole build (every stage counted alike) and the one below the current stage; elsewhere, each stage leaves one
 line when done. Progress bars need `tqdm`; when the build environment lacks it, the hook lists the stages as they start

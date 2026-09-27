@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, override
 from terser.ast import ast, ref
 from .util import arg_rename_in_place, insert
 
-if TYPE_CHECKING:
+if __debug__ and TYPE_CHECKING:
     from typing import Any
 
     from terser.ast import ModuleRef

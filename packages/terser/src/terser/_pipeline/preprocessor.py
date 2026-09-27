@@ -3,10 +3,8 @@ from __future__ import annotations
 import io
 import re
 import tokenize
-from typing import TYPE_CHECKING
 
-
-if TYPE_CHECKING:
+if __debug__ and __import__("typing").TYPE_CHECKING:
     from collections.abc import Mapping
     from typing import Final
 

@@ -7,7 +7,7 @@ from terser.ast.ref import ref_or_none
 from ..resolver import forget, removable
 from ._suite import SuiteTransformer, TransformerFlag
 
-if TYPE_CHECKING:
+if __debug__ and TYPE_CHECKING:
     from ...config import TransformConfig
 
 

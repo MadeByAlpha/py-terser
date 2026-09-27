@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from terser.ast import ast, ref
 from .._module_graph import import_bindings, submodule_hops
 from ..resolver.binder import alias_target
 from ._locals import NameAssigner, add_assigned
 from .util import preserved_names
 
-if TYPE_CHECKING:
+if __debug__ and __import__("typing").TYPE_CHECKING:
     from terser.ast import ModuleRef
 
 

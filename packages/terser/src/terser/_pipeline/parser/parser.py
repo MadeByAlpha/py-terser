@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from terser.ast import DummySpec, ModuleRef, ast
 from ._scope import ScopeResolver
 
-if TYPE_CHECKING:
+if __debug__ and __import__("typing").TYPE_CHECKING:
     from typing import Any
 
     from terser.ast.ref import ModuleSpec

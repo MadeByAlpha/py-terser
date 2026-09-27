@@ -5,7 +5,7 @@ from ._node import ref, ref_or_none
 from ._module import DummySpec, ModuleSpec, ModuleRef, _spec as spec
 
 
-if TYPE_CHECKING:
+if __debug__ and __import__("typing").TYPE_CHECKING:
     from ._node import Comprehension, Invokable, ContainsScope
 
 

@@ -7,7 +7,7 @@ from anyio import Path
 
 from terser.ast.ref import spec
 
-if TYPE_CHECKING:
+if __debug__ and TYPE_CHECKING:
     from collections.abc import Iterator
     from typing import Final
 

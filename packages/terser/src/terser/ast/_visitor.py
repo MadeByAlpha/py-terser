@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, override
 
 from .ast import AST, NodeVisitor as __NodeVisitor, iter_fields
 
-if TYPE_CHECKING:
+if __debug__ and TYPE_CHECKING:
     from ast import Constant
     from collections.abc import Callable
 

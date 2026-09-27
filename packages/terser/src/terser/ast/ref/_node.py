@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, ClassVar, override
 
 from terser.ast.ast import AST as Node, iter_child_nodes
 
-if TYPE_CHECKING:
+if __debug__ and TYPE_CHECKING:
     from ast import AST
     from typing import Final
 

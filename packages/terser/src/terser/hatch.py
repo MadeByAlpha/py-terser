@@ -23,7 +23,7 @@ from .config import RemoveAnnotationOptions, TransformConfig
 from .project import ProjectMinifier
 from .terser import minify_project
 
-if TYPE_CHECKING:
+if __debug__ and TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
     from hatchling.builders.plugin.interface import IncludedFile

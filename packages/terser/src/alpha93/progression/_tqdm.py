@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 from ._reporter import Reporter, Stage
 
-if TYPE_CHECKING:
+if __debug__ and TYPE_CHECKING:
     from collections.abc import Callable
     from typing import TextIO
 

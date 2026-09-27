@@ -4,7 +4,7 @@ import warnings
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, final, override
 
-if TYPE_CHECKING:
+if __debug__ and TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
     from types import TracebackType
     from typing import Self

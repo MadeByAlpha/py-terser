@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, final
 from terser.ast import ast
 from .._scoped import ScopedNode
 
-if TYPE_CHECKING:
+if __debug__ and TYPE_CHECKING:
     from typing import Final
 
     # noinspection protected-member

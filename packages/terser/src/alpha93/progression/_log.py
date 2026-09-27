@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, final, override
 
 from ._reporter import Reporter, Stage
 
-if TYPE_CHECKING:
+if __debug__ and TYPE_CHECKING:
     from typing import TextIO
 
 

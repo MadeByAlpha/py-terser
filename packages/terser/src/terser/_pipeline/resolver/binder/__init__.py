@@ -7,7 +7,7 @@ from ._mark_exports import mark_exports as __mark_exports
 from ._resolve_imports import ImportTarget, UnresolvedModuleRef, alias_target, resolve_imports as __resolve_imports
 from ._bind import bind as __bind
 
-if TYPE_CHECKING:
+if __debug__ and __import__("typing").TYPE_CHECKING:
     from ast import Module
 
 

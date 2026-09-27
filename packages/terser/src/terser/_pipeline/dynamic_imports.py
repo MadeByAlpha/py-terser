@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 from terser.ast import ast, ref
 from .resolver.binding import BuiltinBinding, ImportBinding
 
-if TYPE_CHECKING:
+if __debug__ and __import__("typing").TYPE_CHECKING:
     from terser.ast import ModuleRef
 
 

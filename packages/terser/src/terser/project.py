@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import shutil
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
 
 import anyio
 from anyio import CapacityLimiter, Path, to_thread
@@ -17,7 +16,7 @@ from .ast import ref
 from .ast.ref import spec as _spec
 from .exceptions import DynamicImportWarning
 
-if TYPE_CHECKING:
+if __debug__ and __import__("typing").TYPE_CHECKING:
     import ast
     from collections.abc import Callable
 

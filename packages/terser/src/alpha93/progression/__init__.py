@@ -8,16 +8,22 @@ normally marks it complete, leaving it by an exception leaves it where it stoppe
 `TqdmReporter` needs tqdm, which is optional; `auto_reporter()` falls back to `LogReporter` without it.
 """
 
-from typing import TYPE_CHECKING
-
 from ._auto import auto_reporter, in_ci
 from ._log import LogReporter
 from ._reporter import NullReporter, Reporter, Stage
 
-if TYPE_CHECKING:
+if __debug__ and __import__("typing").TYPE_CHECKING:
     from ._tqdm import TqdmReporter
 
-__all__ = ["LogReporter", "NullReporter", "Reporter", "Stage", "TqdmReporter", "auto_reporter", "in_ci"]
+    __all__ = (
+        "LogReporter",
+        "NullReporter",
+        "Reporter",
+        "Stage",
+        "TqdmReporter",
+        "auto_reporter",
+        "in_ci",
+    )
 
 
 def __getattr__(name: str):

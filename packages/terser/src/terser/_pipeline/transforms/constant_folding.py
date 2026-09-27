@@ -10,7 +10,7 @@ from ..printer.expression_printer import ExpressionPrinter
 from ..resolver import forget
 from ._suite import SuiteTransformer
 
-if TYPE_CHECKING:
+if __debug__ and TYPE_CHECKING:
     from ...config import TransformConfig
 
 

@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from terser.config import TransformConfig, RemoveAnnotationOptions
 from ._argparse import MutuallyExclusive
 
-if TYPE_CHECKING:
+if __debug__ and TYPE_CHECKING:
     from argparse import Namespace
 
 

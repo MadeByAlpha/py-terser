@@ -9,7 +9,7 @@ from alpha93.commons import typed
 from terser.ast import NodeVisitor, ast, ref
 from ..resolver import attach
 
-if TYPE_CHECKING:
+if __debug__ and TYPE_CHECKING:
     from typing import Final
 
     from terser.ast.ref import ContainsScope

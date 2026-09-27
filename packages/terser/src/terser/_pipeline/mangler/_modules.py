@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import fnmatch
-from typing import TYPE_CHECKING
 
 from terser.ast import ast, ref
 from terser.ast.ref._node import NodeRef
@@ -10,7 +9,7 @@ from ..resolver import attach
 from ..resolver.binder import alias_target
 from .name_generator import name_filter
 
-if TYPE_CHECKING:
+if __debug__ and __import__("typing").TYPE_CHECKING:
     from terser.ast import ModuleRef
 
     from ..dynamic_imports import DynamicImport

@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from ._pipeline import dynamic_imports, preprocessor, parser, resolver, transforms, mangler
 from ._pipeline.printer import ModulePrinter
 from .ast import CompareError, ast, compare_ast
 from .exceptions import InvalidTransformError, UnbeneficialMinificationError
 
-if TYPE_CHECKING:
+if __debug__ and __import__("typing").TYPE_CHECKING:
     from .ast.ref import ModuleSpec
     from .config import TransformConfig
 

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from .. import ast
 from ._node import NodeRef
 
-if TYPE_CHECKING:
+if __debug__ and __import__("typing").TYPE_CHECKING:
     from typing import Final, TypeGuard
 
     # noinspection protected-member

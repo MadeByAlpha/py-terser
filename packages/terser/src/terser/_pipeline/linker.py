@@ -7,7 +7,7 @@ from . import dynamic_imports
 from .resolver.binder import alias_target
 from .resolver.binding import ImportBinding
 
-if TYPE_CHECKING:
+if __debug__ and __import__("typing").TYPE_CHECKING:
     from terser.ast import ModuleRef
     from .resolver.binder import ImportTarget, UnresolvedModuleRef
 
