@@ -30,6 +30,24 @@ def _is_unshadowed_builtin(node, name: str) -> bool:
     return isinstance(binding, BuiltinBinding) and binding.name == name and not binding.is_redefined()
 
 
+def _version_order(target: tuple[int, ...], literal: tuple[int, ...]) -> int | None:
+    """
+    How `sys.version_info` compares to `literal` (-1, 0 or 1) for every version `target` starts
+    (`(3, 12)` is any 3.12.x), or None if that depends on the parts `target` leaves out.
+    """
+
+    if len(literal) >= 5:
+        return None  # as long as `sys.version_info`: compared in full, including the release level
+
+    known = target[:len(literal)]
+    if known != literal[:len(known)]:
+        return -1 if known < literal[:len(known)] else 1
+    if len(known) < len(literal):
+        return None
+    # the same up to the literal's end, and `sys.version_info` goes on: it's the greater
+    return 1
+
+
 def is_provably_bool(node) -> bool:
     """
     Check if a node's value is guaranteed to be a bool, syntactically.
@@ -246,8 +264,11 @@ class FoldConstants(SuiteTransformer):
                 return None
             literal.append(elt.value)
 
-        target = tuple(self._config.target_version[:len(literal)])
-        a, b = (tuple(literal), target) if swapped else (target, tuple(literal))
+        if (order := _version_order(tuple(self._config.target_version), tuple(literal))) is None:
+            return None
+
+        # `sys.version_info` compares like a tuple ordered `order` against the literal
+        a, b = (0, order) if swapped else (order, 0)
         return ast.NameConstant(value=op(a, b))
 
     def visit_Compare(self, node):
