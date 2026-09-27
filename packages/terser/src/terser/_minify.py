@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from ._pipeline import dynamic_imports, preprocessor, parser, resolver, transforms, mangler
 from ._pipeline.printer import ModulePrinter
-from .ast import CompareError, ast, compare_ast
+from .ast import CompareError, ast, compare_ast, ref
 from .exceptions import InvalidTransformError, UnbeneficialMinificationError
 
 if __debug__ and __import__("typing").TYPE_CHECKING:
@@ -57,9 +57,11 @@ def minify(
     preserved_names: list[str] | None = None,
     preserved_globals: list[str] | None = None,
     hoist_literals: bool = True,
+    preserve_type_checking: bool = False,
 ) -> tuple[ast.Module, str | None]:
     source, shebang = preprocessor.preprocess(source, defines, strict)
     module = parser.parse(source, spec, optimize=config.optimize)
+    ref(module).preserve_type_checking = preserve_type_checking
 
     for transform in transforms.__transforms__:
         if not transform.is_enabled(config) or transform.FLAGS > 0:

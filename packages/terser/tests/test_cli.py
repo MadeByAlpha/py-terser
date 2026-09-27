@@ -273,6 +273,25 @@ def test_mangling_options():
     assert options.preserve_modules == {"pkg.*"}
 
 
+def test_preserve_type_checking_option():
+    assert _argv("--preserve-type-checking", "pkg", "anyio.*").preserve_type_checking == {"pkg", "anyio.*"}
+    assert _argv().preserve_type_checking == set()
+
+
+TYPE_CHECKING_SOURCE = """\
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    import os
+print(1)
+"""
+
+
+@pytest.mark.parametrize(("pattern", "kept"), [("*lazy.py", True), ("*other.py", False)])
+def test_preserve_type_checking_single_file(tmp_path, pattern, kept):
+    source = write_tree(tmp_path, {"lazy.py": TYPE_CHECKING_SOURCE}) / "lazy.py"
+    assert ("TYPE_CHECKING" in run_terser(source, "--preserve-type-checking", pattern).stdout) is kept
+
+
 def test_help_mentions_every_option():
     help_text = run_terser("--help").stdout
     for field in dataclasses.fields(TransformConfig):

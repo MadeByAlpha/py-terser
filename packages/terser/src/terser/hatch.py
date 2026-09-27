@@ -138,6 +138,7 @@ class TerserBuildHook(BuildHookInterface):
         workers = self._option("workers", lambda v: type(v) is int and v >= 1, "a positive integer", None)
         rename_modules = self._option("rename_modules", lambda v: type(v) is bool, "a boolean", False)
         preserve_modules = self._option("preserve_modules", strings, "a list of strings", [])
+        preserve_type_checking = self._option("preserve_type_checking", strings, "a list of strings", [])
         entry = self._option("entry", strings, "a list of strings", [])
 
         modules = {_dotted(dist_path): dist_path for dist_path in files if dist_path.endswith(_SOURCE_SUFFIXES)}
@@ -167,6 +168,7 @@ class TerserBuildHook(BuildHookInterface):
             "workers": workers,
             "rename_modules": rename_modules,
             "preserve_modules": set(preserve_modules),
+            "preserve_type_checking": set(preserve_type_checking),
             "entry": entry_modules,
         }
 

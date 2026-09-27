@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from hatchling.metadata.core import ProjectMetadata
 from hatchling.plugin.manager import PluginManager
-from helpers import RecordingReporter, run_py, write_tree
+from helpers import LAZY_PACKAGE, RecordingReporter, run_py, write_tree
 
 from terser.hatch import TerserBuildHook
 
@@ -491,6 +491,24 @@ def test_wheel_star_args(tmp_path, options, works):
         assert result.stdout == "['alias', 'default']\n"
     else:
         assert "KeyError: 'extra'" in result.stderr
+
+
+@pytest.mark.parametrize(("options", "works"), [
+    ("", False),
+    ('preserve_type_checking = ["demo"]\n', True),
+])
+def test_wheel_preserve_type_checking(tmp_path, options, works):
+    pyproject = MODULES_PYPROJECT.replace('\n[project.scripts]\ndemo-cli = "demo.cli:main"\n', "") + options
+    sources = {f"src/{path.replace('pkg/', 'demo/')}": source for path, source in LAZY_PACKAGE.items()}
+    project = write_tree(tmp_path / "demo", {"pyproject.toml": pyproject, **sources})
+    run_py("-m", "hatchling", "build", "-t", "wheel", "-d", "dist", cwd=project)
+    path = next((project / "dist").glob("*.whl"))
+
+    result = run_py("-c", "import demo; print(demo.LAZY)", env={"PYTHONPATH": str(path)}, check=False)
+    if works:
+        assert result.stdout == "True\n"
+    else:
+        assert "KeyError: 'TYPE_CHECKING'" in result.stderr
 
 
 def test_wheel_rename_star_args_is_checked(tmp_path):

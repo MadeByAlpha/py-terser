@@ -51,6 +51,10 @@ class ModuleRef(ScopedNode[ast.Module]):
 
     tainted: bool
 
+    preserve_type_checking: bool
+    """If `TYPE_CHECKING` is left as is in this module, for code that reads it back from the
+    source (e.g. anyio's lazy importer, looking for its `if TYPE_CHECKING` block)"""
+
     def __init__(self, module: ast.Module, spec: ModuleSpec):
         self.spec = spec
         self.preserved = set()
@@ -61,6 +65,7 @@ class ModuleRef(ScopedNode[ast.Module]):
         self.wildcard_targets = {}
         self.dynamic_imports = []
         self.tainted = False
+        self.preserve_type_checking = False
 
         super().__init__(module, None)  # type: ignore[ty:invalid-argument-type]
         self._resolve_all()

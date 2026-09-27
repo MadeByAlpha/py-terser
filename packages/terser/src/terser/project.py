@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import os
 import shutil
 from contextlib import asynccontextmanager
@@ -85,6 +86,7 @@ class ProjectMinifier(Pipeline):
         prefer_single_line: bool = True,
         rename_modules: bool = False,
         preserve_modules: set[str] | None = None,
+        preserve_type_checking: set[str] | None = None,
         entry: set[str] | None = None,
     ):
         assert path_provider.is_resolved, "paths are not resolved yet"
@@ -112,6 +114,7 @@ class ProjectMinifier(Pipeline):
         self.prefer_single_line = prefer_single_line
         self.rename_modules = rename_modules
         self.preserve_modules = preserve_modules or set()
+        self.preserve_type_checking = preserve_type_checking or set()
 
         # when a single package directory is given, the output directory stands for that package:
         # its contents are written straight into it, and the package can't be renamed (since its
@@ -223,6 +226,9 @@ class ProjectMinifier(Pipeline):
                 rename=self.rename_locals,
                 preserved_names=local,
                 preserved_globals=sorted(preserved_names(str(spec), self.preserve_globals)),
+                preserve_type_checking=any(
+                    fnmatch.fnmatch(str(spec), pattern) for pattern in self.preserve_type_checking
+                ),
             )
 
         modules: list = [None] * len(self.__module_specs)

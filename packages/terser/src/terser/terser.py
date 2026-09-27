@@ -24,6 +24,7 @@ def minify(
     rename_star_args: bool = True,
     rename_globals: bool = False,
     preserve_globals: list[str] | None = None,
+    preserve_type_checking: bool = False,
     defines: dict[str, bool] | None = None,
     strict: bool = False,
 ):
@@ -46,15 +47,15 @@ def minify(
     :param bool rename_locals: If local names may be shortened
     :param preserve_locals: Locals names to leave unchanged when rename_locals is True. Besides
         names, `*`/`**` stand for `*args`/`**kwargs` parameters (`*name`/`**name` for those named
-        so), and a `qualname glob::` prefix limits an entry to matching functions and classes.
-        The transforms don't unbind them either (e.g. by removing their import)
+        so), and a `qualname glob::` prefix limits an entry to matching functions and classes
     :type preserve_locals: list[str]
     :param bool rename_star_args: If `*args`/`**kwargs` parameter names may be shortened, when
         rename_locals is True
     :param bool rename_globals: If global names may be shortened
-    :param preserve_globals: Global names to leave unchanged when rename_globals is True. Like
-        `preserve_locals`, the transforms don't unbind them (e.g. by removing their import)
+    :param preserve_globals: Global names to leave unchanged when rename_globals is True
     :type preserve_globals: list[str]
+    :param bool preserve_type_checking: Leave `TYPE_CHECKING` and the code it guards as they
+        are, even when `config.fold_type_checking` is True
     :param defines: Values of the names used by `# if NAME` directives. Undefined names count as True
     :type defines: dict[str, bool]
     :param bool strict: Only accept the exact `# if NAME` spelling of directives, and reject unbalanced ones
@@ -70,6 +71,7 @@ def minify(
         preserved_names=sorted(preserve_locals or ()) + ([] if rename_star_args else STAR_ARGS),
         preserved_globals=list(preserve_globals or ()),
         hoist_literals=hoist_literals,
+        preserve_type_checking=preserve_type_checking,
     )
 
     # a single module is linked as a project of its own, so it goes through the same stages

@@ -150,3 +150,33 @@ class RecordingStage(Stage):
 
     def _close(self, completed, /):
         self.completed = completed
+
+
+# like anyio's: deletes `TYPE_CHECKING` from the package's globals, and reads the imports under
+# `if TYPE_CHECKING or ...` back from its source
+LAZY_PACKAGE = {
+    "pkg/__init__.py": """\
+from typing import TYPE_CHECKING
+from ._lazy import install
+if TYPE_CHECKING or not install():
+    from os import path
+""",
+    "pkg/_lazy.py": """\
+import ast
+import inspect
+import sys
+
+
+def install():
+    module_globals = sys._getframe(1).f_globals
+    del module_globals["TYPE_CHECKING"]
+    source = inspect.getsource(sys.modules[module_globals["__name__"]])
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.If) and isinstance(node.test, ast.BoolOp):
+            first = node.test.values[0]
+            if isinstance(first, ast.Name) and first.id == "TYPE_CHECKING":
+                module_globals["LAZY"] = True
+                return True
+    return False
+""",
+}

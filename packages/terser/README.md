@@ -93,7 +93,7 @@ terser src/ --output build/ --entry app.main
 
 Boolean options can be given alone (`--rename-globals`) or with a value (`--rename-locals False`; `yes`/`no` and
 `1`/`0` also work). Options that accept several values
-(`--preserve-locals`, `--preserve-globals`, `--preserve-modules`, `--entry`, `--contracts`) can be given
+(`--preserve-locals`, `--preserve-globals`, `--preserve-modules`, `--preserve-type-checking`, `--entry`, `--contracts`) can be given
 multiple values, and can be repeated.
 
 #### General
@@ -106,6 +106,7 @@ multiple values, and can be repeated.
 | `--prefer-single-line` | `False` | Join statements with `;` instead of newlines, even when it saves no bytes     |
 | `--workers N`          | auto    | Number of worker threads in project mode                                       |
 | `--entry MODULE`       | —       | Entry point modules (dotted module path or file path), project mode only. See [Tree-shaking](#tree-shaking) |
+| `--preserve-type-checking PATTERN` | — | Glob patterns over dotted module paths (filenames in single-file mode); matching modules keep `TYPE_CHECKING` and the code it guards. See [Keeping `TYPE_CHECKING`](#keeping-type_checking) |
 
 #### Transforms
 
@@ -178,12 +179,14 @@ terser src/ --output build/ --rename-star-args false
 In the hatch build hook, the same goes in the keys of the tables: `preserve_locals = { "pydantic.fields::Field" =
 ["**"] }`.
 
-Preserved names also stay bound when nothing in the module reads them any more, for code that looks them up by name.
-`--fold-type-checking` still replaces `TYPE_CHECKING` with `False`, but keeps its import when it is preserved:
+### Keeping `TYPE_CHECKING`
+
+Some code reads `TYPE_CHECKING` back at run time: anyio's lazy importer deletes it from its packages' globals, and
+parses their source for the imports under `if TYPE_CHECKING or ...`. `--fold-type-checking` would fold that block
+away, so leave it as is in the modules matching `--preserve-type-checking`:
 
 ```shell
-# anyio's lazy importer deletes `TYPE_CHECKING` from its packages' globals
-terser src/ --output build/ --preserve-globals 'anyio*:TYPE_CHECKING'
+terser src/ --output build/ --preserve-type-checking 'anyio' 'anyio.*'
 ```
 
 ### Tree-shaking
@@ -236,8 +239,8 @@ remove_annotations = true
 Supported keys:
 
 - Top level: `hoist_literals`, `rename_locals`, `preserve_locals`, `rename_star_args`, `rename_globals`,
-  `preserve_globals`, `workers`, `rename_modules`, `preserve_modules` and `entry`, the same as the command-line
-  options:
+  `preserve_globals`, `workers`, `rename_modules`, `preserve_modules`, `preserve_type_checking` and `entry`, the same
+  as the command-line options:
   - `workers`: the most threads to minify with (and so to create); a positive integer.
   - `rename_modules`: renamed modules and packages are renamed in the wheel too, and a renamed package takes its other
     files (data files, stubs, extension modules) along. Modules the project's scripts and entry points refer to keep
@@ -282,8 +285,9 @@ anyio.run(
 
 `TransformConfig` has the same fields as the transform options above (`remove_annotations` also accepts a
 `RemoveAnnotationOptions` instead of a `bool`). `minify_project` accepts the mangling options as keyword arguments,
-plus `workers`, `rename_modules`, `preserve_modules` and `entry`. `minify_project()` returns where each module and
-extension module went: its source path to its output path, or to `None` when tree-shaking dropped it.
+plus `workers`, `rename_modules`, `preserve_modules`, `preserve_type_checking` and `entry`. `minify_project()` returns
+where each module and extension module went: its source path to its output path, or to `None` when tree-shaking
+dropped it. `minify()` takes `preserve_type_checking` as a `bool`, for its one module.
 
 ## Contracts
 
