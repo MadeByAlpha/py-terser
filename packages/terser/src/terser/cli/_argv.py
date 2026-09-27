@@ -66,7 +66,8 @@ class ManglingOptions(BaseModel):
     """Comma-separated list of local names that will not be mangled; '*'/'**' stand for
     *args/**kwargs parameters ('*name'/'**name' for those named so). Prefix with a glob
     pattern and ':' to scope to matching modules, e.g. 'foo.bar:baz,qux', or with
-    'module::qualname:' to scope to matching functions and classes, e.g. 'pkg.mod::Field:**'"""
+    'module::qualname:' to scope to matching functions and classes, e.g. 'pkg.mod::Field:**'.
+    Transforms don't unbind them either (e.g. by removing an unused `TYPE_CHECKING` import)"""
 
     rename_star_args: bool = True
     """Mangle the names of *args/**kwargs parameters, which show in inspect.signature()"""
@@ -76,7 +77,8 @@ class ManglingOptions(BaseModel):
 
     preserve_globals: Annotated[set[str], Field(default_factory=set)]
     """Comma-separated list of global names that will not be mangled. Prefix with a
-    glob pattern and ':' to scope to matching modules, e.g. 'foo.bar:baz,qux'"""
+    glob pattern and ':' to scope to matching modules, e.g. 'foo.bar:baz,qux'. Transforms
+    don't unbind them either (e.g. by removing an unused `TYPE_CHECKING` import)"""
 
     rename_modules: bool = False
     """Mangle module/package file and directory names (requires --output, since renamed files

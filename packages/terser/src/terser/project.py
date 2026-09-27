@@ -222,6 +222,7 @@ class ProjectMinifier(Pipeline):
                 hoist_literals=self.hoist_literals,
                 rename=self.rename_locals,
                 preserved_names=local,
+                preserved_globals=sorted(preserved_names(str(spec), self.preserve_globals)),
             )
 
         modules: list = [None] * len(self.__module_specs)

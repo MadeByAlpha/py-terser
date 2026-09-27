@@ -24,6 +24,7 @@ class Binding(ABC):
 
     _name: str | None
     _allow_rename: bool
+    _preserved: bool
     _exported: bool
     _reserved: str | None
     _references: list[ast.AST]
@@ -31,6 +32,7 @@ class Binding(ABC):
     def __init__(self, name: str | None = None, allow_rename: bool = True):
         self._name = name
         self._allow_rename = allow_rename
+        self._preserved = False
         self._exported = False
         self._reserved = None
         self._references = []
@@ -60,6 +62,17 @@ class Binding(ABC):
         Prevent this binding from being renamed
         """
         self._allow_rename = False
+
+    @property
+    def preserved(self) -> bool:
+        """
+        If this binding is named by `preserve_locals`/`preserve_globals`: code outside the module
+        may look it up by name, so it must stay bound even once nothing in the module reads it
+        """
+        return self._preserved
+
+    def mark_preserved(self):
+        self._preserved = True
 
     @property
     def reserved(self) -> str | None:

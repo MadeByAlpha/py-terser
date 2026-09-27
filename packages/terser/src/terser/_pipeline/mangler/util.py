@@ -197,7 +197,22 @@ def _qualname(node: ast.AST, enclosing: str | None, in_function: bool) -> str | 
     return f"{enclosing}.<locals>.{name}" if in_function else f"{enclosing}.{name}"
 
 
-def allow_rename_locals(node, rename_locals, preserve_locals=None, _enclosing=(None, False), _rules=None):
+def _local_bindings(node, _enclosing=(None, False)):
+    """(namespace, qualname, binding) for every binding of the function and class scopes in `node`"""
+
+    if not isinstance(node, ast.Module) and is_scoped(node):
+        qualname = _qualname(node, *_enclosing)
+        for binding in ref(node).bindings:
+            yield node, qualname, binding
+
+        if qualname is not _enclosing[0]:
+            _enclosing = qualname, isinstance(node, (*_FUNCTIONS, ast.GeneratorExp))
+
+    for child in ast.iter_child_nodes(node):
+        yield from _local_bindings(child, _enclosing)
+
+
+def allow_rename_locals(node, rename_locals, preserve_locals=None):
     """
     Disallow renaming the local bindings that are not to be renamed.
 
@@ -205,16 +220,29 @@ def allow_rename_locals(node, rename_locals, preserve_locals=None, _enclosing=(N
     :type preserve_locals: list[str] | None
     """
 
-    rules = _rules if _rules is not None else [LocalRule(spec) for spec in preserve_locals or ()]
+    rules = [LocalRule(spec) for spec in preserve_locals or ()]
+    for namespace, qualname, binding in _local_bindings(node):
+        if rename_locals is False or any(rule.preserves(binding.name, namespace, qualname) for rule in rules):
+            binding.disallow_rename()
 
-    if not isinstance(node, ast.Module) and is_scoped(node):
-        qualname = _qualname(node, *_enclosing)
-        for binding in ref(node).bindings:
-            if rename_locals is False or any(rule.preserves(binding.name, node, qualname) for rule in rules):
-                binding.disallow_rename()
 
-        if qualname is not _enclosing[0]:
-            _enclosing = qualname, isinstance(node, (*_FUNCTIONS, ast.GeneratorExp))
+def mark_preserved(module: ast.Module, preserve_locals=None, preserve_globals=None):
+    """
+    Mark the bindings named by `preserve_locals`/`preserve_globals` as preserved, for the
+    transforms not to unbind them (e.g. by removing an import nothing in the module reads).
 
-    for child in ast.iter_child_nodes(node):
-        allow_rename_locals(child, rename_locals, preserve_locals, _enclosing, _rules=rules)
+    :param preserve_locals: `LocalRule` specs of the local names
+    :type preserve_locals: list[str] | None
+    :param preserve_globals: The global (module-level) names
+    :type preserve_globals: list[str] | None
+    """
+
+    rules = [LocalRule(spec) for spec in preserve_locals or ()]
+    for namespace, qualname, binding in _local_bindings(module):
+        if any(rule.preserves(binding.name, namespace, qualname) for rule in rules):
+            binding.mark_preserved()
+
+    preserve_globals = set(preserve_globals or ())
+    for binding in ref(module).bindings:
+        if binding.name in preserve_globals:
+            binding.mark_preserved()

@@ -66,7 +66,7 @@ class FoldTypeChecking(SuiteTransformer):
     Replace `typing.TYPE_CHECKING` (or `typing_extensions`') with `False`, its value at run time,
     for the code only type checkers see to be removed as dead code. `from typing import
     TYPE_CHECKING` and `import typing` left unused are removed too, as importing either does
-    nothing else.
+    nothing else, unless the name is preserved (`preserve_locals`/`preserve_globals`).
     """
     FLAGS = TransformerFlag.REQUIRES_IMPORT_RESOLVE
 
@@ -79,10 +79,12 @@ class FoldTypeChecking(SuiteTransformer):
     def visit_Module(self, node: ast.Module):
         node = super().visit_Module(node)
 
-        # imports left unused, now or once the code only type checkers see is removed as dead code
+        # imports left unused, now or once the code only type checkers see is removed as dead code,
+        # unless preserved: code outside the module may look the name up (e.g. in its globals)
         unused = [
             binding for binding in ref(node).import_targets
-            if not any(isinstance(other, ast.Name) and isinstance(other.ctx, ast.Load) for other in binding.references)
+            if not binding.preserved
+            and not any(isinstance(other, ast.Name) and isinstance(other.ctx, ast.Load) for other in binding.references)
             and (_imports(binding, 'TYPE_CHECKING', ast.ImportFrom) or _imports(binding, binding.source_module or '', ast.Import))
         ]
         return _RemoveImports(self._cache or self._config, unused)(node) if unused else node

@@ -46,12 +46,14 @@ def minify(
     :param bool rename_locals: If local names may be shortened
     :param preserve_locals: Locals names to leave unchanged when rename_locals is True. Besides
         names, `*`/`**` stand for `*args`/`**kwargs` parameters (`*name`/`**name` for those named
-        so), and a `qualname glob::` prefix limits an entry to matching functions and classes
+        so), and a `qualname glob::` prefix limits an entry to matching functions and classes.
+        The transforms don't unbind them either (e.g. by removing their import)
     :type preserve_locals: list[str]
     :param bool rename_star_args: If `*args`/`**kwargs` parameter names may be shortened, when
         rename_locals is True
     :param bool rename_globals: If global names may be shortened
-    :param preserve_globals: Global names to leave unchanged when rename_globals is True
+    :param preserve_globals: Global names to leave unchanged when rename_globals is True. Like
+        `preserve_locals`, the transforms don't unbind them (e.g. by removing their import)
     :type preserve_globals: list[str]
     :param defines: Values of the names used by `# if NAME` directives. Undefined names count as True
     :type defines: dict[str, bool]
@@ -66,6 +68,7 @@ def minify(
         defines=defines,
         rename=rename_locals,
         preserved_names=sorted(preserve_locals or ()) + ([] if rename_star_args else STAR_ARGS),
+        preserved_globals=list(preserve_globals or ()),
         hoist_literals=hoist_literals,
     )
 

@@ -55,6 +55,7 @@ def minify(
     defines: dict[str, bool] | None = None,
     rename: bool = True,
     preserved_names: list[str] | None = None,
+    preserved_globals: list[str] | None = None,
     hoist_literals: bool = True,
 ) -> tuple[ast.Module, str | None]:
     source, shebang = preprocessor.preprocess(source, defines, strict)
@@ -68,6 +69,7 @@ def minify(
 
     resolver.resolve(module)
     resolver.bind(module)
+    mangler.mark_preserved(module, preserved_names, preserved_globals)
 
     cache = transforms.TransformCache(config)
     for _ in range(config.passes):

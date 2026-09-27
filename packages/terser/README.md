@@ -178,6 +178,14 @@ terser src/ --output build/ --rename-star-args false
 In the hatch build hook, the same goes in the keys of the tables: `preserve_locals = { "pydantic.fields::Field" =
 ["**"] }`.
 
+Preserved names also stay bound when nothing in the module reads them any more, for code that looks them up by name.
+`--fold-type-checking` still replaces `TYPE_CHECKING` with `False`, but keeps its import when it is preserved:
+
+```shell
+# anyio's lazy importer deletes `TYPE_CHECKING` from its packages' globals
+terser src/ --output build/ --preserve-globals 'anyio*:TYPE_CHECKING'
+```
+
 ### Tree-shaking
 
 When `--entry` is given, modules that are not reachable (through imports) from any entry module are dropped from the
