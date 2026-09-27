@@ -40,7 +40,8 @@ def shake(project: dict[str, ModuleRef], entry: set[str]) -> dict[str, ModuleRef
             continue
         reachable.add(dotted)
 
-        queue.extend(ancestor for ancestor in __ancestors(dotted) if ancestor not in reachable)
+        # a namespace package (no `__init__.py`) is no module of the project
+        queue.extend(ancestor for ancestor in __ancestors(dotted) if ancestor in project and ancestor not in reachable)
         queue.extend(dep for dep in dependencies(project[dotted], project) if dep not in reachable)
 
     return {dotted: module_ref for dotted, module_ref in project.items() if dotted in reachable}

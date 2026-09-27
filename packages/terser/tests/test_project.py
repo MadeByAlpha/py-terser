@@ -346,3 +346,17 @@ def test_entry_in_package_keeps_package_names(tmp_path):
     assert "app/main.py" in tree
     assert "app/util.py" not in tree
     assert run_py("-m", "app.main", cwd=out).stdout == "hi\n"
+
+
+def test_entry_tree_shaking_through_namespace_package(tmp_path):
+    root = write_tree(tmp_path / "src", {
+        "main.py": "from ns.lib import VALUE\nprint(VALUE)\n",
+        "ns/lib/__init__.py": "from .data import VALUE\n",
+        "ns/lib/data.py": "VALUE = 3\n",
+        "ns/other.py": "UNUSED = 4\n",
+    })
+    out = tmp_path / "out"
+    minify(root, output=out, entry={"main"})
+
+    assert set(read_tree(out)) == {"main.py", "ns/lib/__init__.py", "ns/lib/data.py"}
+    assert run_py("main.py", cwd=out).stdout == "3\n"
