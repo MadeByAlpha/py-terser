@@ -116,8 +116,10 @@ class TransformConfig:
     remove_generics: bool = True
     """Remove bare (non-parametrized) `Generic` base classes"""
 
-    remove_typing_classes: bool = True
-    """Remove bare `Protocol` base classes (unless `@typing.runtime_checkable`)"""
+    remove_typing_classes: bool = False
+    """Remove bare `Protocol` base classes (unless `@typing.runtime_checkable`). Unsafe across module
+    boundaries: a stripped class loses Protocol semantics even where another module subclasses it
+    together with `Protocol[...]`, which raises `TypeError` at class-definition time."""
 
     convert_typing_constructors: bool = True
     """Convert simple `NamedTuple`/`TypedDict` class definitions to `namedtuple`/`dict` constructors"""
@@ -135,8 +137,11 @@ class TransformConfig:
     convert_posargs: bool = True
     """Convert positional-only arguments to normal arguments"""
 
-    remove_dunder_all: bool = True
-    """Remove the top-level `__all__` assignment"""
+    remove_dunder_all: bool = False
+    """Remove the top-level `__all__` assignment. Unsafe across module boundaries: another
+    module doing `from this_module import *` relies on `__all__` (falling back to "no names"
+    when every top-level name is prefixed with an underscore), which a per-module pass run
+    before project-wide linking has no way to see."""
 
 
 # TODO: frozen=True

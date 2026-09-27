@@ -25,5 +25,19 @@ class RemoveAll(SuiteTransformer):
 
     @override
     def visit_Module(self, node: ast.Module):
-        node.body = [stmt for stmt in node.body if not _is_dunder_all_assign(stmt)]
+        assigns = [stmt for stmt in node.body if _is_dunder_all_assign(stmt)]
+        if not assigns:
+            return node
+
+        # Removing the assignment would break other uses of __all__ (e.g.
+        # `__all__.append(...)`), so keep it if referenced anywhere else.
+        referenced_elsewhere = any(
+            isinstance(name, ast.Name) and name.id == '__all__' and isinstance(name.ctx, ast.Load)
+            for stmt in node.body if stmt not in assigns
+            for name in ast.walk(stmt)
+        )
+        if referenced_elsewhere:
+            return node
+
+        node.body = [stmt for stmt in node.body if stmt not in assigns]
         return node

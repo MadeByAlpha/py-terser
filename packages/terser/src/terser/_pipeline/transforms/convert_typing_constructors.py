@@ -3,6 +3,7 @@ from typing import override
 from terser.ast import ast, ref
 from terser.config import TransformConfig
 from terser.utils.imports import qualified_name
+from ..resolver.util import insert
 from ._suite import SuiteTransformer, TransformerFlag
 
 _NAMEDTUPLE_NAMES = ("typing.NamedTuple", "typing_extensions.NamedTuple")
@@ -53,7 +54,8 @@ class ConvertTypingConstructors(SuiteTransformer):
         node.body = self.suite(node.body, parent=node)
 
         if self._needs_collections_import and not self._collections_imported:
-            node.body.insert(0, self.add_child(ast.Import(names=[ast.alias(name='collections', asname=None)]), parent=node))
+            import_stmt = self.add_child(ast.Import(names=[ast.alias(name='collections', asname=None)]), parent=node)
+            node.body = list(insert(node.body, import_stmt))
 
         return node
 
@@ -91,6 +93,9 @@ class ConvertTypingConstructors(SuiteTransformer):
 
     def _convert_typed_dict(self, node: ast.ClassDef):
         binding = ref(node).binding
+        if binding.exported:
+            return _UNSAFE  # may be used from other modules, which this per-module pass can't see
+
         other_refs = [r for r in binding.references if r is not node]
 
         for r in other_refs:
