@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, override
 
 from terser.ast import NodeVisitor, ast, ref
 from .binding import Binding, ImportBinding, NameBinding
-from .util import arg_rename_in_place, is_python_mangled_private, scope_ref_global
+from .util import arg_rename_in_place, scope_ref_global
 
 if __debug__ and TYPE_CHECKING:
     from collections.abc import Callable
@@ -73,10 +73,8 @@ class NameResolver(NodeVisitor):
             # This is actually a syntax error - but we want the same syntax error after minifying!
             binding.disallow_rename()
 
-        if isinstance(namespace, ast.ClassDef) and not is_python_mangled_private(name):
-            # This name will become an attribute of the class, so it can't be renamed -
-            # unless Python's own compiler already private-mangles it (`__foo`), in which
-            # case it's already unreachable from outside under its literal spelling.
+        if isinstance(namespace, ast.ClassDef):
+            # This name will become an attribute of the class, so it can't be renamed
             binding.disallow_rename()
 
         return binding
