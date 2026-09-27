@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, final, override
 
@@ -74,6 +75,11 @@ class Reporter(ABC):
 
     def close(self) -> None:
         pass
+
+    def warn(self, message: str, category: type[Warning] = UserWarning, /) -> None:
+        """Tell about something that went wrong, but not enough to stop. A Python warning by default."""
+
+        warnings.warn(message, category, stacklevel=2)
 
     @final
     def __enter__(self) -> Self:

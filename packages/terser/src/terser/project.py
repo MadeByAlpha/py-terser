@@ -15,6 +15,7 @@ from ._pipeline import PathProvider, Pipeline, linker, mangler, transforms, tree
 from ._pipeline.mangler.util import STAR_ARGS, preserved_names
 from .ast import ref
 from .ast.ref import spec as _spec
+from .exceptions import DynamicImportWarning
 
 if TYPE_CHECKING:
     import ast
@@ -163,6 +164,9 @@ class ProjectMinifier(Pipeline):
             for module in stage.iter(modules):
                 linker.link(module, project)
 
+        if self.rename_modules or self.rename_globals or self.entry:
+            self.__warn_dynamic_imports(project)
+
         with reporter.stage("Tree-shaking"):
             entry = await self.__resolve_entry(project)
             project = tree_shake.shake(project, entry)
@@ -194,6 +198,19 @@ class ProjectMinifier(Pipeline):
                 modules[i] = transforms.TransformCache(self.__config).run_passes(modules[i], 4)
 
         return await self.__dump_results(modules, project, new_dotted)
+
+    def __warn_dynamic_imports(self, project: dict[str, ModuleRef], /) -> None:
+        """Warn about the `__import__()`/`importlib.import_module()` calls this run can't follow."""
+
+        for dotted, module_ref in sorted(project.items()):
+            for found in module_ref.dynamic_imports:
+                if found.name is None:
+                    self.__reporter.warn(
+                        f"{dotted}, {found.location}: `{found.callee}()` is given a module name that is not a "
+                        "literal, so renaming modules or globals and tree-shaking can't follow it (keep what it "
+                        "imports with `preserve_modules`, `preserve_globals` and `entry`)",
+                        DynamicImportWarning,
+                    )
 
     async def __minify_modules(self, /) -> tuple[list[ast.Module], dict[str, ModuleRef]]:
         def __run(source: str, spec: ModuleSpec, /):

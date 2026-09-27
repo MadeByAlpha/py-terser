@@ -28,3 +28,10 @@ class InvalidTransformError(RuntimeError):
 class UnbeneficialMinificationError(Exception):
     """Raised when minification results in larger output than the original."""
     pass
+
+
+class DynamicImportWarning(UserWarning):
+    """
+    An `__import__()` or `importlib.import_module()` call names its module with something else
+    than literals, so renaming modules or globals and tree-shaking can't follow it.
+    """

@@ -181,9 +181,19 @@ In the hatch build hook, the same goes in the keys of the tables: `preserve_loca
 When `--entry` is given, modules that are not reachable (through imports) from any entry module are dropped from the
 output. Entry modules are never renamed by `--rename-modules`.
 
-Both follow imports statically. A module imported by a name computed at run time (`importlib.import_module(name)`,
-`__import__(name)`, looked up in `sys.modules`) is neither kept by tree-shaking nor followed when renamed: keep it with
-`--entry` and `--preserve-modules`.
+Both follow imports statically. `__import__()` and `importlib.import_module()` count as imports when the module is
+named by literals (a relative name too, against a literal package or `__package__`): tree-shaking keeps what they
+import, renaming rewrites the literals, and the attributes of the module they return follow renamed submodules and
+globals, used right away or through a name assigned once:
+
+```python
+settings = importlib.import_module("app.settings")   # followed
+handler = importlib.import_module(f"app.handlers.{name}")   # not followed: a warning
+```
+
+A module named otherwise, only known at run time (or looked up in `sys.modules`), is neither kept by tree-shaking nor
+followed when renamed: keep it with `--entry` and `--preserve-modules` (and its globals with `--preserve-globals`).
+With `--rename-modules`, `--rename-globals` or `--entry`, each such call is reported as a `DynamicImportWarning`.
 
 ```shell
 terser src/ --output build/ --entry app.main app.cli --rename-modules

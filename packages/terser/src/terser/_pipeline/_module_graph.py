@@ -25,7 +25,7 @@ def __shadowed(package: ModuleRef, name: str, submodule: ModuleRef) -> bool:
     )
 
 
-def submodule_hops(node: ast.Name, target: ModuleRef, project: dict[str, ModuleRef]):
+def submodule_hops(node: ast.expr, target: ModuleRef, project: dict[str, ModuleRef]):
     """
     (Attribute node, submodule dotted path) pairs for every submodule hop in an attribute chain
     reading off an imported package (`x.a.b.c`), hopping submodule by submodule until a hop
@@ -94,5 +94,15 @@ def dependencies(module_ref: ModuleRef, project: dict[str, ModuleRef]) -> set[st
 
             for _, submodule_path in submodule_hops(node, binding.target, project):
                 deps.add(submodule_path)
+
+    for found in module_ref.dynamic_imports:
+        for target in (found.target, found.returns, *found.submodules.values()):
+            if target is not None:
+                deps.add(str(target.spec))
+
+        if found.returns is not None:
+            for root in found.roots:
+                for _, submodule_path in submodule_hops(root, found.returns, project):
+                    deps.add(submodule_path)
 
     return deps

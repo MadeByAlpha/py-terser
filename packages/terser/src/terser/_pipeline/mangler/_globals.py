@@ -99,6 +99,16 @@ def _attribute_links(project: dict[str, ModuleRef]):
                 if link is not None:
                     links.append(link)
 
+        # what `__import__()`/`importlib.import_module()` returns
+        for found in module_ref.dynamic_imports:
+            if found.returns is None:
+                continue
+
+            for root in found.roots:
+                link = _walk_attribute_chain(root, found.returns, project)
+                if link is not None:
+                    links.append(link)
+
     return links
 
 

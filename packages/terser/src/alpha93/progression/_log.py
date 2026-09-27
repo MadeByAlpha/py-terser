@@ -37,6 +37,10 @@ class LogReporter(Reporter):
             self.__file.flush()
 
     @override
+    def warn(self, message: str, category: type[Warning] = UserWarning, /) -> None:
+        self._write(f"warning: {message}")
+
+    @override
     def stage(self, name: str, total: int | None = None, /) -> Stage:
         if not self.__verbose:
             self._write(name)

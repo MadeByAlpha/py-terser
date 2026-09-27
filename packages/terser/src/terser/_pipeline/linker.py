@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from terser.ast import ast, ref
+from . import dynamic_imports
 from .resolver.binding import ImportBinding
 
 if TYPE_CHECKING:
@@ -95,3 +96,5 @@ def link(module: ast.Module, project: dict[str, ModuleRef]) -> None:
 
     for stmt, unresolved in module_ref.wildcard_targets.items():
         _link_wildcard(module_ref, stmt, unresolved, project)
+
+    dynamic_imports.link(module_ref, project)

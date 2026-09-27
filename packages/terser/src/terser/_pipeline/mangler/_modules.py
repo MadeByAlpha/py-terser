@@ -10,6 +10,8 @@ from .name_generator import name_filter
 if TYPE_CHECKING:
     from terser.ast import ModuleRef
 
+    from ..dynamic_imports import DynamicImport
+
 
 def __rename_dotted(dotted: str, new_dotted: dict[str, str]) -> str:
     """Rename every renamed segment of a dotted path, walking cumulative old prefixes."""
@@ -83,6 +85,29 @@ def __rename_submodule_alias(alias: ast.alias, submodule_path: str, new_dotted: 
         alias.asname = alias.name
 
     alias.name = new_leaf
+
+
+def __rename_dynamic_import(found: DynamicImport, new_dotted: dict[str, str]):
+    """Rewrite the literals of an `__import__()`/`importlib.import_module()` call naming renamed modules."""
+
+    if found.name is None or found.target is None:
+        return
+
+    new_path = __rename_dotted(found.path, new_dotted)
+    if found.dots:
+        # a relative name keeps its dots, and names as many trailing segments as it did
+        tail = found.name.value.lstrip('.')
+        count = tail.count('.') + 1 if tail else 0
+        new_tail = '.'.join(new_path.split('.')[-count:]) if count else ''
+        found.name.value = '.' * (found.dots if found.callee != '__import__' else 0) + new_tail
+
+        if found.package is not None:
+            found.package.value = __rename_dotted(found.package.value, new_dotted)
+    else:
+        found.name.value = new_path
+
+    for entry, submodule in found.submodules.items():
+        entry.value = new_dotted.get(str(submodule.spec), str(submodule.spec)).rsplit('.', 1)[-1]
 
 
 def mangle_modules(
@@ -178,5 +203,15 @@ def mangle_modules(
                     new_path = new_dotted.get(submodule_path)
                     if new_path is not None:
                         attr_node.attr = new_path.rsplit('.', 1)[-1]
+
+        for found in module_ref.dynamic_imports:
+            __rename_dynamic_import(found, new_dotted)
+
+            if found.returns is not None:
+                for root in found.roots:
+                    for attr_node, submodule_path in submodule_hops(root, found.returns, project):
+                        new_path = new_dotted.get(submodule_path)
+                        if new_path is not None:
+                            attr_node.attr = new_path.rsplit('.', 1)[-1]
 
     return new_dotted

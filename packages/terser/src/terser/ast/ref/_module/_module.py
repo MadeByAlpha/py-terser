@@ -12,6 +12,8 @@ if TYPE_CHECKING:
     from terser._pipeline.resolver.binder import UnresolvedModuleRef
     # noinspection protected-member
     from terser._pipeline.resolver.binding import ImportBinding
+    # noinspection protected-member
+    from terser._pipeline.dynamic_imports import DynamicImport
     from ._spec import ModuleSpec
 
 
@@ -35,6 +37,10 @@ class ModuleRef(ScopedNode[ast.Module]):
     """Every `from x import *` statement in this module, mapped to its resolved path once
     `resolve_imports` has run (None until then)"""
 
+    dynamic_imports: list[DynamicImport]
+    """Every `__import__()`/`importlib.import_module()` call in this module, once
+    `dynamic_imports.find` has run"""
+
     tainted: bool
 
     def __init__(self, module: ast.Module, spec: ModuleSpec):
@@ -43,6 +49,7 @@ class ModuleRef(ScopedNode[ast.Module]):
         self.all = None
         self.import_targets = {}
         self.wildcard_targets = {}
+        self.dynamic_imports = []
         self.tainted = False
 
         super().__init__(module, None)  # type: ignore[ty:invalid-argument-type]

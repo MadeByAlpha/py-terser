@@ -497,3 +497,13 @@ def test_wheel_rename_star_args_is_checked(tmp_path):
     result, _ = _build_modules_wheel(tmp_path, 'rename_star_args = "no"\n', check=False)
     assert result.returncode != 0
     assert "`rename_star_args` must be a boolean" in result.stderr
+
+
+def test_wheel_warns_about_dynamic_imports(tmp_path):
+    MODULES_SOURCES["src/demo/loader.py"] = "def load(name):\n    return __import__(name)\n"
+    try:
+        result, _ = _build_modules_wheel(tmp_path, 'entry = ["demo"]\n')
+    finally:
+        del MODULES_SOURCES["src/demo/loader.py"]
+    assert "terser: warning: demo.loader, line 2: `__import__()` is given a module name that is not a literal" \
+        in result.stderr

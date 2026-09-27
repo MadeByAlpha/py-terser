@@ -117,6 +117,9 @@ class HoistLiterals(NodeVisitor):
     def __call__(self, module, ignore_slots=True):
         self.module = module
         self._ignore_slots = ignore_slots
+        self._pinned = {
+            literal for found in getattr(ref(module), 'dynamic_imports', ()) for literal in found.literals
+        }
         self._hoisted = {}
         self.visit(module)
         self.place_bindings()
@@ -206,6 +209,11 @@ class HoistLiterals(NodeVisitor):
         if isinstance(ref(node).parent, ast.Expr):
             # This is literal statement
             # The RemoveLiteralStatements transformer must have left it here, so ignore it.
+            return
+
+        if node in self._pinned:
+            # names a module in `__import__()`/`importlib.import_module()`: renaming modules
+            # rewrites it there
             return
 
         self.get_binding(node.s, node).add_reference(node)

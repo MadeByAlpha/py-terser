@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ._pipeline import preprocessor, parser, resolver, transforms, mangler
+from ._pipeline import dynamic_imports, preprocessor, parser, resolver, transforms, mangler
 from ._pipeline.printer import ModulePrinter
 from .ast import CompareError, ast, compare_ast
 from .exceptions import InvalidTransformError, UnbeneficialMinificationError
@@ -76,6 +76,9 @@ def minify(
         module, changed = cache.run(module, 1)
         if not changed:
             break
+
+    # before hoisting literals, which would take the module names out of the calls
+    dynamic_imports.find(module)
 
     if hoist_literals:
         mangler.hoist_literals(module)

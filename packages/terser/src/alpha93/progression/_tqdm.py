@@ -118,6 +118,12 @@ class TqdmReporter(Reporter):
                 self.__overall.update(done - self.__overall.n)
 
     @override
+    def warn(self, message: str, category: type[Warning] = UserWarning, /) -> None:
+        # above the bars, which are drawn again below it
+        with self.__lock:
+            tqdm.write(f"{self.__prefix}warning: {message}", file=self.__file)
+
+    @override
     def close(self) -> None:
         with self.__lock:
             if self.__overall is not None:
