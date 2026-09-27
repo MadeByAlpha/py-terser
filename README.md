@@ -124,7 +124,9 @@ multiple values, and can be repeated.
 | `--remove-attribute-annotations` | `False` | Remove class attribute annotations                                            |
 | `--remove-explicit-base`         | `True`  | Remove explicit base classes (e.g. `class A(object)`)                         |
 | `--remove-explicit-return-none`  | `True`  | Replace `return None` with `return`                                           |
-| `--fold-constants`               | `True`  | Evaluate constant expressions and shrink literals                             |
+| `--fold-constants`               | `True`  | Evaluate constant expressions and shrink literals, and decide `and`/`or`/`x if c else y` by their constant operands (`False and x` → `False`) |
+| `--fold-type-checking`           | `True`  | Replace `typing.TYPE_CHECKING` (also `typing_extensions`') with `False`, its value at run time, removing the import when nothing else uses it |
+| `--remove-dead-code`             | `True`  | Remove the branches of `if`/`while` whose condition is constant (`if False:`, `if TYPE_CHECKING:`), unless that changes how the function compiles (`if False: yield`, a `global`, or the only assignment of a local) |
 | `--remove-debug`                 | `True`  | Remove `if __debug__:` blocks                                                 |
 | `--remove-asserts`               | `True`  | Remove `assert` statements                                                    |
 | `--convert-pass`                 | `True`  | Remove `pass`, or replace it with the shortest literal statement (`0`)        |

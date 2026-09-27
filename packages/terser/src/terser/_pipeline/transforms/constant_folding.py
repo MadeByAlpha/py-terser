@@ -4,8 +4,10 @@ import math
 from typing import TYPE_CHECKING, override
 
 from terser.ast import ast, compare_ast, is_constant_node, ref
+from terser.ast.ref import ref_or_none
 
 from ..printer.expression_printer import ExpressionPrinter
+from ..resolver import forget
 from ._suite import SuiteTransformer
 
 if TYPE_CHECKING:
@@ -134,6 +136,69 @@ class FoldConstants(SuiteTransformer):
             return node
 
         return self.fold(node)
+
+    def visit_BoolOp(self, node):
+        node.values = [self.visit(value) for value in node.values]
+
+        # `and` gives the first falsy operand (`or` the first truthy one), else the last: a constant
+        # decides it where it's falsy (truthy), and is skipped otherwise, unless it's the last
+        deciding = not isinstance(node.op, ast.And)
+        values, dropped = [], []
+        for i, value in enumerate(node.values):
+            if not isinstance(value, ast.Constant):
+                values.append(value)
+            elif bool(value.value) is deciding:
+                values.append(value)
+                dropped += node.values[i + 1:]
+                break
+            elif i == len(node.values) - 1:
+                values.append(value)
+            else:
+                dropped.append(value)
+
+        if not dropped or not _droppable(dropped):
+            return node
+
+        forget(dropped)
+        if len(values) == 1:
+            [value] = values
+            _reparent(value, node)
+            return value
+
+        node.values = values
+        return node
+
+    def visit_IfExp(self, node):
+        node.test = self.visit(node.test)
+        node.body = self.visit(node.body)
+        node.orelse = self.visit(node.orelse)
+
+        if not isinstance(node.test, ast.Constant):
+            return node
+
+        value, dropped = (node.body, node.orelse) if node.test.value else (node.orelse, node.body)
+        if not _droppable([dropped]):
+            return node
+
+        forget([node.test, dropped])
+        _reparent(value, node)
+        return value
+
+
+def _reparent(node, replaced):
+    """Put `node` where `replaced` was"""
+
+    if (node_ref := ref_or_none(node)) is not None and (replaced_ref := ref_or_none(replaced)) is not None:
+        node_ref.parent = replaced_ref.parent
+
+
+def _droppable(nodes) -> bool:
+    """If expressions that never run can be dropped: none binds a name, or makes a generator"""
+
+    return not any(
+        isinstance(node, (ast.NamedExpr, ast.Yield, ast.YieldFrom))
+        for root in nodes for node in ast.walk(root)
+    )
 
 
 def equal_value_and_type(a, b):

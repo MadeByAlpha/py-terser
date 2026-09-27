@@ -294,3 +294,15 @@ def test_rename_globals_follows_function_level_imports(tmp_path):
     minify(root, output=out, rename_globals=True)
     assert "X=" not in read_tree(out)["pkg/alpha.py"]
     assert run_py("main.py", cwd=out).stdout == "a\n"
+
+
+def test_type_checking_imports_are_not_dependencies(tmp_path):
+    root = write_tree(tmp_path / "src", {
+        "main.py": "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    from types_only import Alias\n"
+                   "def f(x: 'Alias'):\n    return x\nprint(f(1))\n",
+        "types_only.py": "Alias = int\n",
+    })
+    out = tmp_path / "out"
+    minify(root, output=out, entry={"main"}, rename_globals=True)
+    assert set(read_tree(out)) == {"main.py"}
+    assert run_py("main.py", cwd=out).stdout == "1\n"

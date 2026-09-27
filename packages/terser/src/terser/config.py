@@ -52,6 +52,12 @@ class TransformConfig:
     fold_constants: bool = True
     """Evaluate and shrink constant literals"""
 
+    fold_type_checking: bool = True
+    """Replace `typing.TYPE_CHECKING` with `False`, its value at run time"""
+
+    remove_dead_code: bool = True
+    """Remove the branches of `if`/`while` statements whose condition is a constant"""
+
     remove_debug: bool = True
     """Remove conditional statements that test __debug__ is True (part of FoldConstants)"""
 

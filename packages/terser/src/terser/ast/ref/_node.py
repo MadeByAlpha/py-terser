@@ -57,3 +57,5 @@ class NodeRef[T: AST]:
 
 
 ref = lambda node: getattr(node, _FIELD)
+ref_or_none = lambda node: getattr(node, _FIELD, None)
+"""`ref(node)`, or None for a node given none (made after the module was parsed)"""

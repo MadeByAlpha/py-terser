@@ -2,8 +2,10 @@ from ._suite import TransformCache
 from .contracts import Contracts
 from .combine_imports import CombineImports
 from .constant_folding import FoldConstants
+from .fold_type_checking import FoldTypeChecking
 from .remove_annotations import RemoveAnnotations
 from .remove_asserts import RemoveAsserts
+from .remove_dead_code import RemoveDeadCode
 from .remove_debug import RemoveDebug
 from .remove_exception_brackets import RemoveExceptionBrackets
 from .remove_explicit_return_none import RemoveExplicitReturnNone
@@ -24,7 +26,9 @@ __transforms__ = [
     RemoveDebug,
     RemoveExplicitReturnNone,
     RemoveExceptionBrackets,
+    FoldTypeChecking,
     FoldConstants,
+    RemoveDeadCode,
     ConvertPosargs,
 ]
 
