@@ -460,3 +460,40 @@ def test_rollup_rename_modules_and_entry(tmp_path, extra_rollup_sources):
     assert run_py("-c", "from demo import add_numbers; print(add_numbers(20, 2))",
                   env={"PYTHONPATH": str(path)}).stdout == "42\n"
     assert list(dist.iterdir()) == [path]
+
+
+SIGNATURE_SOURCES = {
+    "src/demo/__init__.py": "",
+    "src/demo/sig.py": (
+        "import inspect\n\n\n"
+        "def Field(default=None, *, alias=None, **extra):\n"
+        "    return default, alias, extra\n\n\n"
+        "FIELD_ARGS = set(inspect.signature(Field).parameters)\n"
+        "FIELD_ARGS.remove('extra')\n"
+    ),
+}
+
+
+@pytest.mark.parametrize(("options", "works"), [
+    ("", False),
+    ('preserve_locals = { "demo.sig::Field" = ["**"] }\n', True),
+    ("rename_star_args = false\n", True),
+])
+def test_wheel_star_args(tmp_path, options, works):
+    pyproject = MODULES_PYPROJECT.replace('\n[project.scripts]\ndemo-cli = "demo.cli:main"\n', "") + options
+    project = write_tree(tmp_path / "demo", {"pyproject.toml": pyproject, **SIGNATURE_SOURCES})
+    run_py("-m", "hatchling", "build", "-t", "wheel", "-d", "dist", cwd=project)
+    path = next((project / "dist").glob("*.whl"))
+
+    result = run_py("-c", "from demo.sig import FIELD_ARGS; print(sorted(FIELD_ARGS))",
+                    env={"PYTHONPATH": str(path)}, check=False)
+    if works:
+        assert result.stdout == "['alias', 'default']\n"
+    else:
+        assert "KeyError: 'extra'" in result.stderr
+
+
+def test_wheel_rename_star_args_is_checked(tmp_path):
+    result, _ = _build_modules_wheel(tmp_path, 'rename_star_args = "no"\n', check=False)
+    assert result.returncode != 0
+    assert "`rename_star_args` must be a boolean" in result.stderr

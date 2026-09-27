@@ -4,8 +4,7 @@ import fnmatch
 from typing import TYPE_CHECKING
 
 from terser.ast import ast, ref
-from .._module_graph import submodule_hops
-from ..resolver.binding import ImportBinding
+from .._module_graph import import_bindings, submodule_hops
 from .name_generator import name_filter
 
 if TYPE_CHECKING:
@@ -167,8 +166,8 @@ def mangle_modules(
         for stmt, unresolved in module_ref.wildcard_targets.items():
             __rename_from_module(stmt, unresolved.path, new_dotted)
 
-        for binding in module_ref.bindings:
-            if not isinstance(binding, ImportBinding) or binding.target is None or binding.target_name is not None:
+        for binding in import_bindings(module_ref):
+            if binding.target is None or binding.target_name is not None:
                 continue
 
             for node in binding.references:

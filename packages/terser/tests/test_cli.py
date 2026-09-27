@@ -165,6 +165,8 @@ def test_output_and_in_place_are_exclusive(example, tmp_path):
     (["pkg.*:a", "b"], {"pkg.*": ["a"], "*": ["b"]}),
     ([" pkg : a , b "], {"pkg": ["a", "b"]}),
     ([":a"], {"*": ["a"]}),
+    (["pkg.mod::Field:**,*args"], {"pkg.mod::Field": ["**", "*args"]}),
+    (["*::Model.*:a"], {"*::Model.*": ["a"]}),
 ])
 def test_parse_preserve(args, expected):
     from terser.cli._argv import parse_preserve
@@ -278,3 +280,34 @@ def test_output_parses(project, tmp_path):
     run_terser(project, "--output", output)
     for source in read_tree(output).values():
         ast.parse(source)
+
+
+SIGNATURE = """\
+import inspect
+
+
+def Field(default=None, *, alias=None, **extra):
+    return default, alias, extra
+
+
+names = set(inspect.signature(Field).parameters)
+names.remove("extra")
+print(sorted(names))
+"""
+
+
+@pytest.mark.parametrize("args", [
+    ["--rename-star-args", "false"],
+    ["--preserve-locals", "**extra"],
+    ["--preserve-locals", "*::Field:**"],
+])
+def test_star_args_kept_for_inspect(tmp_path, args):
+    source = write_tree(tmp_path, {"sig.py": SIGNATURE}) / "sig.py"
+    minified = run_terser(source, *args).stdout
+    assert "**extra" in minified
+    assert run_py("-c", minified).stdout == "['alias', 'default']\n"
+
+
+def test_star_args_renamed_by_default(tmp_path):
+    source = write_tree(tmp_path, {"sig.py": SIGNATURE}) / "sig.py"
+    assert "**extra" not in run_terser(source).stdout

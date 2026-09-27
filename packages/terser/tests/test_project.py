@@ -203,7 +203,6 @@ def test_pyw_files(tmp_path):
     assert run_py("app.pyw", cwd=out).stdout == "42\n"
 
 
-@pytest.mark.xfail(strict=True, reason="`from . import sub` is neither renamed nor followed by tree-shaking")
 @pytest.mark.parametrize("options", [{"rename_modules": True}, {"entry": {"main"}}])
 def test_relative_submodule_import(tmp_path, options):
     root = write_tree(tmp_path / "src", {
@@ -216,7 +215,6 @@ def test_relative_submodule_import(tmp_path, options):
     assert run_py("main.py", cwd=out).stdout == "1\n"
 
 
-@pytest.mark.xfail(strict=True, reason="tree-shaking does not follow imports inside functions")
 def test_entry_keeps_function_level_imports(tmp_path):
     root = write_tree(tmp_path / "src", {
         "main.py": "def f():\n    import dep\n    return dep.Y\nprint(f())\n",
@@ -225,3 +223,15 @@ def test_entry_keeps_function_level_imports(tmp_path):
     out = tmp_path / "out"
     minify(root, output=out, entry={"main"})
     assert run_py("main.py", cwd=out).stdout == "2\n"
+
+
+def test_package_name_shadowing_its_submodule(tmp_path):
+    # `from .version import version` imports the submodule, then takes `pkg.version` over
+    root = write_tree(tmp_path / "src", {
+        "main.py": "import pkg\nprint(pkg.version)\n",
+        "pkg/__init__.py": "from .version import version\n",
+        "pkg/version.py": 'version = "1.0"\n',
+    })
+    out = tmp_path / "out"
+    minify(root, output=out, rename_modules=True, preserve_modules={"main"})
+    assert run_py("main.py", cwd=out).stdout == "1.0\n"

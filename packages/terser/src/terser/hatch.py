@@ -194,6 +194,7 @@ class TerserBuildHook(BuildHookInterface):
                 hoist_literals=self.config.get("hoist_literals", True),
                 rename_locals=self.config.get("rename_locals", True),
                 preserve_locals=self.config.get("preserve_locals"),
+                rename_star_args=self._option("rename_star_args", lambda v: type(v) is bool, "a boolean", True),
                 rename_globals=self.config.get("rename_globals", False),
                 preserve_globals=self.config.get("preserve_globals"),
                 **options,

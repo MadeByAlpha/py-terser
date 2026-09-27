@@ -138,6 +138,7 @@ multiple values, and can be repeated.
 | `--hoist-literals`           | `True`  | Replace frequently used literals with short-named variables                   |
 | `--rename-locals`            | `True`  | Rename local (including nonlocal) names                                        |
 | `--preserve-locals NAMES`    | —       | Local names that are not renamed. See [Preserving names](#preserving-names)   |
+| `--rename-star-args`         | `True`  | Rename `*args`/`**kwargs` parameters, whose names show in `inspect.signature()` |
 | `--rename-globals`           | `False` | Rename module-level names. In project mode, importers in other modules follow |
 | `--preserve-globals NAMES`   | —       | Global names that are not renamed                                              |
 | `--rename-modules`           | `False` | Rename module/package files and directories. Project mode only, requires `--output` |
@@ -156,10 +157,33 @@ terser src/ --output build/ --rename-globals --preserve-globals config,logger
 terser src/ --output build/ --rename-globals --preserve-globals 'app.api.*:handler'
 ```
 
+`--preserve-locals` is more specific still:
+
+- `*` and `**` stand for a function's `*args` and `**kwargs` parameters, whatever their names; `*name` and `**name`
+  for them only when they have that name. Other locals of the same names are still renamed.
+- The module pattern may go on with `::` and a glob over the `__qualname__` of the function or class the name is bound
+  in (`Field`, `Model.__init__`, `outer.<locals>.inner`). A list, set or dict comprehension counts as part of the
+  function it is in.
+
+```shell
+# pydantic reads `**extra` of `Field` back through `inspect.signature()`
+terser src/ --output build/ --preserve-locals 'pydantic.fields::Field:**'
+
+# Keep the names of every `*args`/`**kwargs` parameter
+terser src/ --output build/ --rename-star-args false
+```
+
+In the hatch build hook, the same goes in the keys of the tables: `preserve_locals = { "pydantic.fields::Field" =
+["**"] }`.
+
 ### Tree-shaking
 
 When `--entry` is given, modules that are not reachable (through imports) from any entry module are dropped from the
 output. Entry modules are never renamed by `--rename-modules`.
+
+Both follow imports statically. A module imported by a name computed at run time (`importlib.import_module(name)`,
+`__import__(name)`, looked up in `sys.modules`) is neither kept by tree-shaking nor followed when renamed: keep it with
+`--entry` and `--preserve-modules`.
 
 ```shell
 terser src/ --output build/ --entry app.main app.cli --rename-modules
@@ -191,8 +215,9 @@ remove_annotations = true
 
 Supported keys:
 
-- Top level: `hoist_literals`, `rename_locals`, `preserve_locals`, `rename_globals`, `preserve_globals`, `workers`,
-  `rename_modules`, `preserve_modules` and `entry`, the same as the command-line options:
+- Top level: `hoist_literals`, `rename_locals`, `preserve_locals`, `rename_star_args`, `rename_globals`,
+  `preserve_globals`, `workers`, `rename_modules`, `preserve_modules` and `entry`, the same as the command-line
+  options:
   - `workers`: the most threads to minify with (and so to create); a positive integer.
   - `rename_modules`: renamed modules and packages are renamed in the wheel too, and a renamed package takes its other
     files (data files, stubs, extension modules) along. Modules the project's scripts and entry points refer to keep

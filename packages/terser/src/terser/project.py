@@ -12,7 +12,7 @@ from alpha93.progression import NullReporter
 
 from ._minify import minify, unparse
 from ._pipeline import PathProvider, Pipeline, linker, mangler, transforms, tree_shake
-from ._pipeline.mangler.util import preserved_names
+from ._pipeline.mangler.util import STAR_ARGS, preserved_names
 from .ast import ref
 from .ast.ref import spec as _spec
 
@@ -78,6 +78,7 @@ class ProjectMinifier(Pipeline):
         *,
         rename_locals: bool = True,
         preserve_locals: dict[str, list[str]] | None = None,
+        rename_star_args: bool = True,
         rename_globals: bool = False,
         preserve_globals: dict[str, list[str]] | None = None,
         hoist_literals: bool = True,
@@ -104,6 +105,7 @@ class ProjectMinifier(Pipeline):
 
         self.rename_locals = rename_locals
         self.preserve_locals = preserve_locals or {}
+        self.rename_star_args = rename_star_args
         self.rename_globals = rename_globals
         self.preserve_globals = preserve_globals or {}
         self.hoist_literals = hoist_literals
@@ -196,6 +198,8 @@ class ProjectMinifier(Pipeline):
     async def __minify_modules(self, /) -> tuple[list[ast.Module], dict[str, ModuleRef]]:
         def __run(source: str, spec: ModuleSpec, /):
             local = sorted(preserved_names(str(spec), self.preserve_locals))
+            if not self.rename_star_args:
+                local += STAR_ARGS
             return minify(
                 source, spec,
                 self.__config,

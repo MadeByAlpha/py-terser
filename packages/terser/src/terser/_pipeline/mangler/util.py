@@ -11,13 +11,17 @@ def preserved_names(module_path: str, preserved: dict[str, list[str]]) -> set[st
 
     :param module_path: The module's dotted path (or filename, for non-project usage)
     :param preserved: Names to leave unchanged, keyed by a glob pattern matched against
-        ``module_path`` (e.g. ``{"foo.bar": ["baz"], "*": ["qux"]}``)
+        ``module_path`` (e.g. ``{"foo.bar": ["baz"], "*": ["qux"]}``). A pattern may go on with
+        ``::`` and a glob over qualnames (``{"foo.bar::Model.*": ["baz"]}``); its names are then
+        returned as ``qualname::name``, for `LocalRule`
     """
 
     names = set()
     for pattern, pattern_names in preserved.items():
-        if fnmatch.fnmatch(module_path, pattern):
-            names.update(pattern_names)
+        # `module::qualname` limits the names to that scope: `LocalRule` sorts it out
+        module_pattern, sep, qualname = pattern.partition('::')
+        if fnmatch.fnmatch(module_path, module_pattern):
+            names.update(f"{qualname}::{name}" if sep else name for name in pattern_names)
     return names
 
 
@@ -130,17 +134,87 @@ def insert(suite, new_node):
         yield new_node
 
 
-def allow_rename_locals(node, rename_locals, preserve_locals=None):
+# `preserve_locals` specs for every `*args` and `**kwargs` parameter: their names show in
+# `inspect.signature()`, which some code relies on
+STAR_ARGS = ['*', '**']
 
-    if preserve_locals is None:
-        preserve_locals = []
+
+class LocalRule:
+    """
+    One entry of `preserve_locals`: `[qualname glob::]name`, where `name` is a local name, or a
+    parameter kind - `*`/`**` for a function's `*args`/`**kwargs` parameter, `*name`/`**name`
+    for it only when it has that name.
+
+    The qualname glob is matched against the `__qualname__` of the function or class the name
+    is bound in (e.g. `Field`, `Model.__init__`, `outer.<locals>.inner`); without one, the rule
+    applies in every scope.
+    """
+
+    __slots__ = ('kind', 'name', 'qualname')
+
+    def __init__(self, spec: str, /):
+        qualname, sep, name = spec.rpartition('::')
+        self.qualname = qualname if sep else None
+        self.kind = '**' if name.startswith('**') else '*' if name.startswith('*') else ''
+        self.name = name[len(self.kind):] or None
+
+        if not self.kind and self.name is None:
+            raise ValueError(f"preserve_locals: {spec!r} names nothing")
+
+    def preserves(self, name: str, namespace: ast.AST, qualname: str | None) -> bool:
+        if self.qualname is not None and (qualname is None or not fnmatch.fnmatchcase(qualname, self.qualname)):
+            return False
+
+        if not self.kind:
+            return name == self.name
+
+        args = getattr(namespace, 'args', None)
+        param = getattr(args, 'vararg' if self.kind == '*' else 'kwarg', None) if isinstance(args, ast.arguments) else None
+        return param is not None and param.arg == name and self.name in (None, name)
+
+
+_FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+
+
+def _qualname(node: ast.AST, enclosing: str | None, in_function: bool) -> str | None:
+    """
+    The `__qualname__` of the scope `node` introduces, within the one whose own is `enclosing`:
+    names in a function are qualified by `<locals>`, the ones in a class body are not.
+    """
+
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        name = node.name
+    elif isinstance(node, ast.Lambda):
+        name = '<lambda>'
+    elif isinstance(node, ast.GeneratorExp):
+        name = '<genexpr>'
+    else:
+        # other comprehensions are inlined in the scope they're in (PEP 709)
+        return enclosing
+
+    if enclosing is None:
+        return name
+    return f"{enclosing}.<locals>.{name}" if in_function else f"{enclosing}.{name}"
+
+
+def allow_rename_locals(node, rename_locals, preserve_locals=None, _enclosing=(None, False), _rules=None):
+    """
+    Disallow renaming the local bindings that are not to be renamed.
+
+    :param preserve_locals: `LocalRule` specs of the names to leave unchanged
+    :type preserve_locals: list[str] | None
+    """
+
+    rules = _rules if _rules is not None else [LocalRule(spec) for spec in preserve_locals or ()]
 
     if not isinstance(node, ast.Module) and is_scoped(node):
+        qualname = _qualname(node, *_enclosing)
         for binding in ref(node).bindings:
-            if rename_locals is False:
-                binding.disallow_rename()
-            elif binding.name in preserve_locals:
+            if rename_locals is False or any(rule.preserves(binding.name, node, qualname) for rule in rules):
                 binding.disallow_rename()
 
+        if qualname is not _enclosing[0]:
+            _enclosing = qualname, isinstance(node, (*_FUNCTIONS, ast.GeneratorExp))
+
     for child in ast.iter_child_nodes(node):
-        allow_rename_locals(child, rename_locals, preserve_locals)
+        allow_rename_locals(child, rename_locals, preserve_locals, _enclosing, _rules=rules)

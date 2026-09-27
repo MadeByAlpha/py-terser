@@ -23,7 +23,11 @@ def _link_alias(
         return
 
     name = binding.node.name  # the imported attribute/submodule name
-    if package_target is not None and any(binding.name == name for binding in package_target.bindings):
+    # `from . import y` in x's own `__init__` binds y there itself: x has no y of its own yet, so
+    # the import reaches for the submodule
+    if package_target is not None and any(
+        other.name == name and other is not binding for other in package_target.bindings
+    ):
         binding.target = package_target
         binding.target_name = name
         return

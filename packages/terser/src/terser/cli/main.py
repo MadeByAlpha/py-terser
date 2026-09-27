@@ -64,6 +64,7 @@ def main(argv: list[str] | None = None):
                 hoist_literals=mangling.hoist_literals,
                 rename_locals=mangling.rename_locals,
                 preserve_locals=sorted(preserved_names(path, parse_preserve(mangling.preserve_locals))),
+                rename_star_args=mangling.rename_star_args,
                 rename_globals=mangling.rename_globals,
                 preserve_globals=sorted(preserved_names(path, parse_preserve(mangling.preserve_globals))),
             )
@@ -94,6 +95,7 @@ def main(argv: list[str] | None = None):
             hoist_literals=args.mangling_options.hoist_literals,
             rename_locals=args.mangling_options.rename_locals,
             preserve_locals=parse_preserve(args.mangling_options.preserve_locals),
+            rename_star_args=args.mangling_options.rename_star_args,
             rename_globals=args.mangling_options.rename_globals,
             preserve_globals=parse_preserve(args.mangling_options.preserve_globals),
             rename_modules=args.mangling_options.rename_modules,
