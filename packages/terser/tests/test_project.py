@@ -277,13 +277,13 @@ def test_renamed_root_package_binds_no_other_name(tmp_path, rename_globals):
 
 def test_rename_globals_follows_function_level_imports(tmp_path):
     root = write_tree(tmp_path / "src", {
-        "main.py": "def f():\n    import pkg.alpha\n    return pkg.alpha.X\nprint(f())\n",
+        "main.py": "def f():\n    import pkg.alpha\n    return pkg.alpha.VALUE\nprint(f())\n",
         "pkg/__init__.py": "",
-        "pkg/alpha.py": 'X = "a"\n',
+        "pkg/alpha.py": 'VALUE = "a"\n',
     })
     out = tmp_path / "out"
     minify(root, output=out, rename_globals=True)
-    assert "X=" not in read_tree(out)["pkg/alpha.py"]
+    assert "VALUE=" not in read_tree(out)["pkg/alpha.py"]
     assert run_py("main.py", cwd=out).stdout == "a\n"
 
 
@@ -297,3 +297,36 @@ def test_type_checking_imports_are_not_dependencies(tmp_path):
     minify(root, output=out, entry={"main"}, rename_globals=True)
     assert set(read_tree(out)) == {"main.py"}
     assert run_py("main.py", cwd=out).stdout == "1\n"
+
+
+def test_preserved_reexport_keeps_its_name(tmp_path):
+    # `main.application` is renamed, `pkg.application` is preserved: `from .main import A as application`
+    root = write_tree(tmp_path / "src", {
+        "run.py": "from pkg import application\nprint(application())\n",
+        "pkg/__init__.py": "from .main import application\n",
+        "pkg/main.py": "def application():\n    return 'ok'\n",
+    })
+    out = tmp_path / "out"
+    minify(root, output=out, rename_globals=True, preserve_globals={"pkg": ["application"], "run": ["application"]})
+    tree = read_tree(out)
+    assert "def application" not in tree["pkg/main.py"]
+    assert "as application" in tree["pkg/__init__.py"]
+    assert run_py("run.py", cwd=out).stdout == "ok\n"
+
+
+def test_keyword_parameter_alias(tmp_path):
+    # a keyword-callable parameter keeps its name, and is aliased to a shorter one in the body
+    source = (
+        "def total(quantity, *, discount_percentage=0):\n"
+        "    for _ in range(3):\n"
+        "        quantity = quantity + discount_percentage + discount_percentage + discount_percentage\n"
+        "    return quantity\n"
+        "print(total(1, discount_percentage=2))\n"
+    )
+    root = write_tree(tmp_path / "src", {"main.py": source})
+    expected = run_py("main.py", cwd=root).stdout
+    out = tmp_path / "out"
+    minify(root, output=out)
+    minified = read_tree(out)["main.py"]
+    assert "discount_percentage=0" in minified
+    assert run_py("main.py", cwd=out).stdout == expected

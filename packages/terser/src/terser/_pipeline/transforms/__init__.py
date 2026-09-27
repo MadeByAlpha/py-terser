@@ -13,23 +13,64 @@ from .remove_literal_statements import RemoveLiteralStatements
 from .remove_object_base import RemoveObject
 from .remove_pass import RemovePass
 from .remove_posargs import ConvertPosargs
+from .unfold_iife import UnfoldIIFE
+from .remove_type_statements import RemoveTypeStatements
+from .convert_typing_extensions import ConvertTypingExtensions
+from .convert_early_exits import ConvertEarlyExits
+from .convert_to_inline import ConvertToInline
+from .convert_to_lambda import ConvertToLambda
+from .remove_dummy_assignments import RemoveDummyAssignments
+from .remove_docstrings import RemoveDocstrings
+from .cleanup_local_imports import CleanupLocalImports
+from .remove_overloads import RemoveOverloads
+from .remove_typing_decorators import RemoveTypingDecorators
+from .remove_generics import RemoveGenerics
+from .remove_typing_classes import RemoveTypingClasses
+from .convert_typing_constructors import ConvertTypingConstructors
+from .convert_dynamic_attribute_access import ConvertDynamicAttributeAccess
+from .remove_all import RemoveAll
+from .apply_constant_decorator import ApplyConstantDecorator
 
 
 __transforms__ = [
-    Contracts,
+    # FLAGS = 0 (pre-resolve, pure syntax)
+    UnfoldIIFE,
+    RemoveTypeStatements,
+    ConvertTypingExtensions,
     RemoveLiteralStatements,
     CombineImports,
-    RemoveAnnotations,
     RemovePass,
     RemoveObject,
     RemoveAsserts,
     RemoveDebug,
     RemoveExplicitReturnNone,
-    RemoveExceptionBrackets,
+    ConvertEarlyExits,
+
+    # FLAGS = REQUIRES_IMPORT_RESOLVE
+    Contracts,
+    ApplyConstantDecorator,
+    RemoveAnnotations,
+    ConvertToLambda,
+    RemoveDummyAssignments,
+    RemoveDocstrings,
+    CleanupLocalImports,
+    RemoveOverloads,
+    RemoveTypingDecorators,
+    RemoveGenerics,
+    RemoveTypingClasses,
+    ConvertTypingConstructors,
+    ConvertDynamicAttributeAccess,
     FoldTypeChecking,
     FoldConstants,
     RemoveDeadCode,
+    ConvertToInline,
+
+    # FLAGS = REQUIRES_MODULE_RESOLVE
+    RemoveExceptionBrackets,
+
+    # FLAGS = INFLUENCES_MANGLING
     ConvertPosargs,
+    RemoveAll,
 ]
 
 __all__ = ("TransformCache", "__transforms__")

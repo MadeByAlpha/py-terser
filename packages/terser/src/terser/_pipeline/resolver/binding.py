@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, override
 
 from terser.ast import ast, ref
+from terser.ast.ref._node import NodeRef
 from .util import arg_rename_in_place, insert
 
 if __debug__ and TYPE_CHECKING:
@@ -287,6 +288,16 @@ class Binding(ABC):
         if reserved is not None:
             self._reserved = reserved
 
+    def remove_reference(self, node: ast.AST):
+        """
+        Drop a reference from this binding, e.g. when a transform deletes the node that
+        made it (a stripped decorator, a removed branch) - otherwise the stale entry keeps
+        the binding looking used to reference-count-based checks (unused-import cleanup,
+        safe-to-drop-definition checks) even after nothing in the tree points to it anymore.
+        """
+
+        self._references.remove(node)
+
     @abstractmethod
     def should_rename(self, new_name: str) -> bool:
         """
@@ -344,7 +355,10 @@ class NameBinding(Binding):
         additional_bytes = self.additional_byte_cost()
         rename_cost = (old_mentions * len(self.name)) + (new_mentions * len(new_name)) + additional_bytes
 
-        return rename_cost <= current_cost
+        # Strict improvement only - a tie is no gain, and leaving the original name alone
+        # keeps it free for whatever *other* binding would otherwise need to fall back to a
+        # longer candidate to avoid colliding with a pointless same-length rename.
+        return rename_cost < current_cost
 
     @override
     def disallow_rename(self):
@@ -383,7 +397,7 @@ class NameBinding(Binding):
                 if (vararg := node.vararg) and (vararg.arg == self.name) and not getattr(node, "vararg_renamed", False):
                     vararg.arg = new_name
                     setattr(node, "vararg_renamed", True)
-                if (kwarg := node.vararg) and (kwarg.arg == self.name) and not getattr(node, "kwarg_renamed", False):
+                if (kwarg := node.kwarg) and (kwarg.arg == self.name) and not getattr(node, "kwarg_renamed", False):
                     kwarg.arg = new_name
                     setattr(node, "kwarg_renamed", True)
 
@@ -401,15 +415,22 @@ class NameBinding(Binding):
                 node.name = new_name
 
         if func_namespace_binding:
-            func_namespace_binding.body = list(
-                insert(
-                    func_namespace_binding.body,
-                    ast.Assign(
-                        targets=[ast.Name(id=new_name, ctx=ast.Store())],
-                        value=ast.Name(id=self._name, ctx=ast.Load()),
-                    ),
-                )
-            )
+            # a keyword-callable parameter can't be renamed in place (would break call
+            # sites), so it keeps its original name and gets aliased to the new short
+            # name via an assignment at the top of the function body instead
+            target = ast.Name(id=new_name, ctx=ast.Store())
+            value = ast.Name(id=self._name, ctx=ast.Load())
+            new_stmt = ast.Assign(targets=[target], value=value)
+
+            NodeRef.new(new_stmt, func_namespace_binding)
+            ref(new_stmt).namespace = func_namespace_binding
+            NodeRef.new(target, new_stmt)
+            ref(target).namespace = func_namespace_binding
+            NodeRef.new(value, new_stmt)
+            ref(value).namespace = func_namespace_binding
+            self.add_reference(value)  # reads the (still current) self._name - another reference to this binding
+
+            func_namespace_binding.body = list(insert(func_namespace_binding.body, new_stmt))
 
         self._name = new_name
 
@@ -470,6 +491,20 @@ class ImportBinding(NameBinding):
         """
         ref = self._module_ref.import_targets.get(self)
         return ref.path if ref is not None else None
+
+    @property
+    def remote_name(self) -> str | None:
+        """
+        The name this binding refers to *in its source module*, when that's not the same as
+        the local (possibly aliased, possibly later mangled) `.name` - e.g. `"override"` for
+        `from typing import override as ov`. `None` for a plain `import x [as y]` (the binding
+        names the module itself, not a symbol within it) or a wildcard-derived binding, where
+        `.name` is already the right thing to qualify `source_module` with.
+        """
+        if isinstance(self.node, ast.alias) and isinstance(ref(self.node).parent, ast.ImportFrom):
+            return self.node.name
+
+        return None
 
 
 class UnresolvedBinding(NameBinding):

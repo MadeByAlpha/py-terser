@@ -4,7 +4,21 @@ from typing import override
 
 from terser.ast import ast, ref
 from terser.config import RemoveAnnotationOptions, TransformConfig
+from terser.utils.hints import is_hinted
+from terser.utils.imports import qualified_name
 from ._suite import SuiteTransformer, TransformerFlag
+
+_ANNOTATED_NAMES = ("typing.Annotated", "typing_extensions.Annotated")
+
+
+def _is_annotated(annotation: ast.expr | None) -> bool:
+    """
+    `Annotated[X, ...]` metadata is often consumed at runtime (e.g. pydantic `Field(...)`, FastAPI
+    dependencies) - a bare signature/attribute type can't express that, so stripping it risks
+    losing information the annotation itself never encoded. Bare string (forward-ref) annotations
+    can't be `Annotated[...]` at the AST level, so they always fall through and get stripped.
+    """
+    return isinstance(annotation, ast.Subscript) and qualified_name(annotation.value) in _ANNOTATED_NAMES
 
 
 class RemoveAnnotations(SuiteTransformer):
@@ -23,14 +37,16 @@ class RemoveAnnotations(SuiteTransformer):
         self._options = RemoveAnnotationOptions() if isinstance(self._config.remove_annotations, bool) else self._config.remove_annotations
 
     def visit_FunctionDef(self, node):
-        node.args = self.visit_arguments(node.args)
+        preserved = is_hinted(node.decorator_list, "preserve_annotations", self._config)
+
+        node.args = node.args if preserved else self.visit_arguments(node.args)
         node.body = self.suite(node.body, parent=node)
         node.decorator_list = [self.visit(d) for d in node.decorator_list]
 
         if hasattr(node, 'type_params') and node.type_params is not None:
             node.type_params = [self.visit(t) for t in node.type_params]
 
-        if hasattr(node, 'returns') and self._options.remove_return_annotations:
+        if hasattr(node, 'returns') and self._options.remove_return_annotations and not preserved and not _is_annotated(node.returns):
             node.returns = None
 
         return node
@@ -48,14 +64,14 @@ class RemoveAnnotations(SuiteTransformer):
             node.kwonlyargs = [self.visit_arg(a) for a in node.kwonlyargs]
 
         if hasattr(node, 'varargannotation'):
-            if self._options.remove_argument_annotations:
+            if self._options.remove_argument_annotations and not _is_annotated(node.varargannotation):
                 node.varargannotation = None
         else:
             if node.vararg:
                 node.vararg = self.visit_arg(node.vararg)
 
         if hasattr(node, 'kwargannotation'):
-            if self._options.remove_argument_annotations:
+            if self._options.remove_argument_annotations and not _is_annotated(node.kwargannotation):
                 node.kwargannotation = None
         else:
             if node.kwarg:
@@ -64,7 +80,7 @@ class RemoveAnnotations(SuiteTransformer):
         return node
 
     def visit_arg(self, node):
-        if self._options.remove_argument_annotations:
+        if self._options.remove_argument_annotations and not _is_annotated(node.annotation):
             node.annotation = None
         return node
 
@@ -108,13 +124,13 @@ class RemoveAnnotations(SuiteTransformer):
         # is this a class attribute or a variable?
         node_ref = ref(node)
         if isinstance(node_ref.parent, ast.ClassDef):
-            if not self._options.remove_attribute_annotations:
+            if not self._options.remove_attribute_annotations or is_hinted(node_ref.parent.decorator_list, "preserve_annotations", self._config):
                 return node
         else:
             if not self._options.remove_variable_annotations:
                 return node
 
-        if is_dataclass_field(node_ref) or is_typing_sensitive(node_ref):
+        if is_dataclass_field(node_ref) or is_typing_sensitive(node_ref) or _is_annotated(node.annotation):
             return node
         elif node.value:
             return self.add_child(ast.Assign([node.target], node.value), parent=node_ref.parent, namespace=node_ref.namespace)

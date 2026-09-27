@@ -1,17 +1,71 @@
 from __future__ import annotations
 
 import math
+import operator
 from typing import TYPE_CHECKING, override
 
 from terser.ast import ast, compare_ast, is_constant_node, ref
 from terser.ast.ref import ref_or_none
+from terser.utils.imports import qualified_name
 
+from ..resolver.binding import BuiltinBinding
 from ..printer.expression_printer import ExpressionPrinter
 from ..resolver import forget
-from ._suite import SuiteTransformer
+from ._suite import SuiteTransformer, TransformerFlag
 
 if __debug__ and TYPE_CHECKING:
     from ...config import TransformConfig
+
+
+def _is_unshadowed_builtin(node, name: str) -> bool:
+    if not isinstance(node, ast.Name):
+        return False
+
+    try:
+        binding = ref(node).binding
+    except AttributeError:
+        # some mangler-synthesized nodes are never fully registered with a binding
+        return False
+
+    return isinstance(binding, BuiltinBinding) and binding.name == name and not binding.is_redefined()
+
+
+def _version_order(target: tuple[int, ...], literal: tuple[int, ...]) -> int | None:
+    """
+    How `sys.version_info` compares to `literal` (-1, 0 or 1) for every version `target` starts
+    (`(3, 12)` is any 3.12.x), or None if that depends on the parts `target` leaves out.
+    """
+
+    if len(literal) >= 5:
+        return None  # as long as `sys.version_info`: compared in full, including the release level
+
+    known = target[:len(literal)]
+    if known != literal[:len(known)]:
+        return -1 if known < literal[:len(known)] else 1
+    if len(known) < len(literal):
+        return None
+    # the same up to the literal's end, and `sys.version_info` goes on: it's the greater
+    return 1
+
+
+def is_provably_bool(node) -> bool:
+    """
+    Check if a node's value is guaranteed to be a bool, syntactically.
+
+    Used to guard `X is True`/`X is False`-style folding: swapping an identity/equality
+    check for a bare truthiness check is only sound when `X` can't be some other
+    truthy/falsy-but-not-actually-bool value.
+    """
+    if is_constant_node(node, ast.NameConstant) and isinstance(node.value, bool):
+        return True
+
+    if isinstance(node, ast.Compare):
+        return True
+
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        return True
+
+    return False
 
 
 def is_foldable_constant(node):
@@ -38,7 +92,7 @@ class FoldConstants(SuiteTransformer):
     """
     Fold Constants if it would reduce the size of the source
     """
-    FLAGS = 0
+    FLAGS = TransformerFlag.REQUIRES_IMPORT_RESOLVE
 
     @override
     @classmethod
@@ -183,6 +237,114 @@ class FoldConstants(SuiteTransformer):
         forget([node.test, dropped])
         _reparent(value, node)
         return value
+
+    def _fold_version_info(self, node):
+        if self._config.target_version is None or len(node.ops) != 1:
+            return None
+
+        ops = {
+            ast.Lt: operator.lt, ast.LtE: operator.le, ast.Gt: operator.gt,
+            ast.GtE: operator.ge, ast.Eq: operator.eq, ast.NotEq: operator.ne,
+        }
+        op = ops.get(type(node.ops[0]))
+        if op is None:
+            return None
+
+        left, right = node.left, node.comparators[0]
+        swapped = qualified_name(left) != 'sys.version_info'
+        if swapped:
+            left, right = right, left
+
+        if qualified_name(left) != 'sys.version_info' or not isinstance(right, ast.Tuple):
+            return None
+
+        literal: list[int] = []
+        for elt in right.elts:
+            if not is_constant_node(elt, ast.Num) or not isinstance(elt.value, int):
+                return None
+            literal.append(elt.value)
+
+        if (order := _version_order(tuple(self._config.target_version), tuple(literal))) is None:
+            return None
+
+        # `sys.version_info` compares like a tuple ordered `order` against the literal
+        a, b = (0, order) if swapped else (order, 0)
+        return ast.NameConstant(value=op(a, b))
+
+    def visit_Compare(self, node):
+        node.left = self.visit(node.left)
+        node.comparators = [self.visit(c) for c in node.comparators]
+
+        if (new_node := self._fold_version_info(node)) is not None:
+            node_ref = ref(node)
+            return self.add_child(new_node, node_ref.parent, node_ref.namespace)
+
+        if len(node.ops) != 1 or not isinstance(node.ops[0], (ast.Eq, ast.NotEq, ast.Is, ast.IsNot)):
+            return node
+
+        left, right = node.left, node.comparators[0]
+        left_bool = is_constant_node(left, ast.NameConstant) and isinstance(left.value, bool)
+        right_bool = is_constant_node(right, ast.NameConstant) and isinstance(right.value, bool)
+
+        if left_bool == right_bool:
+            # exactly one side must be a bool literal - both or neither isn't this pattern
+            return node
+
+        bool_value, other = (left.value, right) if left_bool else (right.value, left)
+
+        # `X is True` -> `X` (and similar) is only sound if `X` is itself
+        # guaranteed to be a bool - otherwise it swaps an identity/equality
+        # check for a truthiness check, which differ for any non-bool value
+        # (e.g. `0 is False` is False, but `not 0` is True).
+        if not is_provably_bool(other):
+            return node
+
+        negate = bool_value == isinstance(node.ops[0], (ast.NotEq, ast.IsNot))
+
+        new_node = ast.UnaryOp(op=ast.Not(), operand=other) if negate else other
+        node_ref = ref(node)
+        return self.add_child(new_node, node_ref.parent, node_ref.namespace)
+
+    def visit_Name(self, node):
+        if not isinstance(node.ctx, ast.Load):
+            # a Store/Del context is the binding's own definition site, not a usage to fold
+            return node
+
+        # `optimize` is the level the code is compiled with: unknown by default (-1), where
+        # `__debug__` is left for the interpreter running it to decide
+        if node.id != '__debug__' or self._config.optimize < 0 or not _is_unshadowed_builtin(node, '__debug__'):
+            return node
+
+        new_node = ast.NameConstant(value=self._config.optimize == 0)
+        node_ref = ref(node)
+        return self.add_child(new_node, node_ref.parent, node_ref.namespace)
+
+    def visit_Call(self, node):
+        node.func = self.visit(node.func)
+        node.args = [self.visit(a) for a in node.args]
+        node.keywords = [self.visit(k) for k in node.keywords]
+
+        if node.keywords:
+            return node
+
+        new_node = None
+        if not node.args and _is_unshadowed_builtin(node.func, 'list'):
+            new_node = ast.List(elts=[], ctx=ast.Load())
+        elif not node.args and _is_unshadowed_builtin(node.func, 'dict'):
+            new_node = ast.Dict(keys=[], values=[])
+        elif not node.args and _is_unshadowed_builtin(node.func, 'tuple'):
+            new_node = ast.Tuple(elts=[], ctx=ast.Load())
+        elif (
+            len(node.args) == 1 and isinstance(node.args[0], (ast.List, ast.Tuple)) and node.args[0].elts
+            and _is_unshadowed_builtin(node.func, 'set')
+        ):
+            new_node = ast.Set(elts=node.args[0].elts)
+
+        if new_node is None:
+            return node
+
+        node_ref = ref(node)
+        return self.add_child(new_node, node_ref.parent, node_ref.namespace)
 
 
 def _reparent(node, replaced):

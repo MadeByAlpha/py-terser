@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, override
 
 from terser.ast import ast, ref
 from terser.ast.ref import ref_or_none
+from terser.utils.imports import qualified_name
 from ..resolver import forget
 from ..resolver.binding import ImportBinding
 from ._suite import SuiteTransformer, TransformerFlag
@@ -12,6 +13,7 @@ if __debug__ and TYPE_CHECKING:
     from ...config import TransformConfig
 
 _TYPING = frozenset({'typing', 'typing_extensions'})
+_NAMES = frozenset({f'{module}.TYPE_CHECKING' for module in _TYPING})
 
 
 def _binding(node: ast.AST):
@@ -30,6 +32,12 @@ def _imports(binding: object, imported: str, statement: type[ast.Import | ast.Im
         for other in binding.references
         if not (isinstance(other, ast.Name) and isinstance(other.ctx, ast.Load))
     )
+
+
+def _dynamic(node: ast.expr) -> bool:
+    """If `node` is a dynamic import (`__import__(...)`), or a name not bound by an import statement"""
+
+    return isinstance(node, ast.Call) or (isinstance(node, ast.Name) and not isinstance(_binding(node), ImportBinding))
 
 
 class _RemoveImports(SuiteTransformer):
@@ -102,6 +110,9 @@ class FoldTypeChecking(SuiteTransformer):
         # `from typing import TYPE_CHECKING [as name]`
         if isinstance(node.ctx, ast.Load) and _imports(_binding(node), 'TYPE_CHECKING', ast.ImportFrom):
             return self.__fold(node)
+        # `name = __import__("typing").TYPE_CHECKING`, assigned once
+        if isinstance(node.ctx, ast.Load) and not isinstance(_binding(node), ImportBinding) and qualified_name(node) in _NAMES:
+            return self.__fold(node)
         return node
 
     @override
@@ -112,5 +123,8 @@ class FoldTypeChecking(SuiteTransformer):
             and isinstance(binding := _binding(node.value), ImportBinding)
             and _imports(binding, binding.source_module or '', ast.Import)
         ):
+            return self.__fold(node)
+        # `__import__("typing").TYPE_CHECKING`, or through a name assigned such a call once
+        if node.attr == 'TYPE_CHECKING' and isinstance(node.ctx, ast.Load) and _dynamic(node.value) and qualified_name(node) in _NAMES:
             return self.__fold(node)
         return self.generic_visit(node)
