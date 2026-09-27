@@ -24,7 +24,7 @@ SRC = ROOT / "src"
 # TransformConfig fields that toggle a transform (everything that isn't a tuning knob)
 _TOGGLES = frozenset(
     f.name for f in dataclasses.fields(TransformConfig)
-    if f.name not in {"passes", "optimize", "contracts", "hint_modules", "target_version", "remove_dunder_all_modules"}
+    if f.name not in {"passes", "optimize", "contracts", "hint_modules", "target_version", "remove_dunder_all_modules", "preserve_annotations"}
 )
 
 

@@ -64,6 +64,13 @@ class TransformConfig:
     remove_annotations: bool | RemoveAnnotationOptions = True
     """Options that affect how annotations are removed"""
 
+    preserve_annotations: list[str] = field(default_factory=list)
+    """Glob patterns matched against a module's dotted path (in single-file mode, its filename
+    without `.py`), optionally going on with `::` and a glob over the `__qualname__` of a class or function
+    (`fastapi.openapi.models`, `app.deps::Settings`): what they match keeps its annotations, for
+    code reading them at run time that `remove_annotations` can't tell (classes like pydantic
+    models, dataclasses and `TypedDict`s are told on their own)"""
+
     remove_explicit_base: bool = True
     """Remove explicit base classes"""
 

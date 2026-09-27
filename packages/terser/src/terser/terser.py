@@ -86,6 +86,7 @@ def minify(
     module_ref = ref(module)
     project = {str(module_ref.spec): module_ref}
     linker.link(module, project)
+    transforms.mark_annotation_readers(project)
 
     module = transforms.TransformCache(config).run_passes(module, 2)
     mangler.mangle_globals(project, rename_globals, {"*": list(preserve_globals or ())})

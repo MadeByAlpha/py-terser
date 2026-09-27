@@ -1,14 +1,42 @@
 from __future__ import annotations
 
+import fnmatch
 from typing import override
 
 from terser.ast import ast, ref
+from terser.ast.ref import ref_or_none
 from terser.config import RemoveAnnotationOptions, TransformConfig
 from terser.utils.hints import is_hinted
 from terser.utils.imports import qualified_name
+from ..resolver.binding import BuiltinBinding, ImportBinding, UnresolvedBinding
 from ._suite import SuiteTransformer, TransformerFlag
 
+if __debug__ and __import__("typing").TYPE_CHECKING:
+    from terser.ast import ModuleRef
+
 _ANNOTATED_NAMES = ("typing.Annotated", "typing_extensions.Annotated")
+
+# classes built from the annotations in their body (and a subclass of one, or a class of one of the
+# metaclasses): `x: int = 0` is a field there, `x = 0` a plain class attribute
+_ANNOTATION_READERS = frozenset({
+    "typing.NamedTuple", "typing_extensions.NamedTuple",
+    "typing.TypedDict", "typing_extensions.TypedDict",
+    "pydantic.BaseModel", "pydantic.main.BaseModel",
+    "pydantic.RootModel", "pydantic.root_model.RootModel",
+    "pydantic._internal._model_construction.ModelMetaclass",
+    "pydantic.v1.BaseModel", "pydantic.v1.main.BaseModel", "pydantic.v1.main.ModelMetaclass",
+    "pydantic_settings.BaseSettings", "pydantic_settings.main.BaseSettings",
+    "sqlmodel.SQLModel", "sqlmodel.main.SQLModel",
+    "msgspec.Struct",
+})
+
+# class decorators reading the annotations in the class body
+_ANNOTATION_READING_DECORATORS = frozenset({
+    "dataclasses.dataclass",
+    "pydantic.dataclasses.dataclass",
+    "attr.s", "attr.attrs", "attr.define", "attr.frozen", "attr.mutable",
+    "attrs.define", "attrs.frozen", "attrs.mutable",
+})
 
 
 def _is_annotated(annotation: ast.expr | None) -> bool:
@@ -21,11 +49,140 @@ def _is_annotated(annotation: ast.expr | None) -> bool:
     return isinstance(annotation, ast.Subscript) and qualified_name(annotation.value) in _ANNOTATED_NAMES
 
 
+def _syntactic_reader(node: ast.ClassDef) -> bool:
+    """A class read by name alone: `@dataclass`-decorated, or a direct `NamedTuple`/`TypedDict` subclass."""
+
+    for decorator in node.decorator_list:
+        func = decorator.func if isinstance(decorator, ast.Call) else decorator
+        if isinstance(func, ast.Name) and func.id == 'dataclass' or isinstance(func, ast.Attribute) and func.attr == 'dataclass':
+            return True
+
+    for base in node.bases:
+        if isinstance(base, ast.Name) and base.id in ('NamedTuple', 'TypedDict'):
+            return True
+        if isinstance(base, ast.Attribute) and base.attr in ('NamedTuple', 'TypedDict'):
+            return True
+    return False
+
+
+class _Readers:
+    """
+    Which classes have their annotations read at run time: ones `_syntactic_reader` tells, and the
+    ones whose bases or metaclass lead (through the project's linked imports, if any) to one of
+    `_ANNOTATION_READERS`, or whose decorators are among `_ANNOTATION_READING_DECORATORS`.
+    """
+
+    def __init__(self):
+        self._known: dict[int, bool] = {}
+
+    def __call__(self, module_ref: ModuleRef, node: ast.ClassDef) -> bool:
+        if (known := self._known.get(id(node))) is not None:
+            return known
+
+        self._known[id(node)] = False  # while it's being looked at: a cycle reads nothing
+        self._known[id(node)] = result = self._reads(module_ref, node)
+        return result
+
+    def _reads(self, module_ref: ModuleRef, node: ast.ClassDef) -> bool:
+        if _syntactic_reader(node):
+            return True
+
+        if ref(node).namespace is module_ref.ast and f"{module_ref.spec}.{node.name}" in _ANNOTATION_READERS:
+            return True
+
+        for decorator in node.decorator_list:
+            if qualified_name(decorator.func if isinstance(decorator, ast.Call) else decorator) in _ANNOTATION_READING_DECORATORS:
+                return True
+
+        metaclasses = [keyword.value for keyword in node.keywords if keyword.arg == 'metaclass']
+        return any(self._leads_to_reader(module_ref, base) for base in (*node.bases, *metaclasses))
+
+    def _leads_to_reader(self, module_ref: ModuleRef, node: ast.expr) -> bool:
+        while isinstance(node, ast.Subscript):  # `RootModel[int]`, `Generic[T]`
+            node = node.value
+
+        if qualified_name(node) in _ANNOTATION_READERS:
+            return True
+
+        found = self._definition(module_ref, node)
+        return found is not None and self(*found)
+
+    def _definition(self, module_ref: ModuleRef, node: ast.expr) -> tuple[ModuleRef, ast.ClassDef] | None:
+        """Where the class `node` names is defined, as far as the project tells"""
+
+        if isinstance(node, ast.Attribute):
+            # `module.Class`, of an imported module
+            if (
+                isinstance(node.value, ast.Name) and (value_ref := ref_or_none(node.value)) is not None
+                and isinstance(binding := getattr(value_ref, 'binding', None), ImportBinding)
+                and binding.target is not None and binding.target_name is None
+            ):
+                return self._lookup(binding.target, node.attr, set())
+            return None
+
+        if not isinstance(node, ast.Name) or (node_ref := ref_or_none(node)) is None:
+            return None
+
+        binding = getattr(node_ref, 'binding', None)
+        if isinstance(binding, ImportBinding):
+            if binding.target is not None and binding.target_name is not None:
+                return self._lookup(binding.target, binding.target_name, set())
+            return None
+
+        if binding is None or isinstance(binding, (BuiltinBinding, UnresolvedBinding)):
+            return None
+        return _class_of(module_ref, binding)
+
+    def _lookup(self, module_ref: ModuleRef, name: str, seen: set[tuple[int, str]]) -> tuple[ModuleRef, ast.ClassDef] | None:
+        """The class `name` is in `module_ref`, following re-exports"""
+
+        if (id(module_ref), name) in seen:
+            return None
+        seen.add((id(module_ref), name))
+
+        for binding in module_ref.bindings:
+            if binding.name != name:
+                continue
+            if isinstance(binding, ImportBinding):
+                if binding.target is not None and binding.target_name is not None:
+                    return self._lookup(binding.target, binding.target_name, seen)
+                return None
+            return _class_of(module_ref, binding)
+        return None
+
+
+def _class_of(module_ref: ModuleRef, binding) -> tuple[ModuleRef, ast.ClassDef] | None:
+    """The class statement binding `binding`, if that is what binds it"""
+
+    classes = [node for node in binding.references if isinstance(node, ast.ClassDef)]
+    return (module_ref, classes[0]) if len(classes) == 1 else None
+
+
+def mark_annotation_readers(project: dict[str, ModuleRef]) -> None:
+    """
+    Tell `RemoveAnnotations` which classes of `project` have their annotations read, once it's
+    linked and before any module is transformed further: a class it looks into may be changed by
+    then (a `TypedDict` turned into `dict`, say).
+    """
+
+    readers = _Readers()
+    for module_ref in project.values():
+        for node in ast.walk(module_ref.ast):
+            if isinstance(node, ast.ClassDef):
+                ref(node).reads_annotations = readers(module_ref, node)
+
+
 class RemoveAnnotations(SuiteTransformer):
     """
     Remove type annotations from source
+
+    Left alone: `Annotated[...]`, what `@terser_hints.preserve_annotations` or
+    `config.preserve_annotations` names, and the body of every class whose annotations are read at
+    run time (pydantic models, dataclasses, `TypedDict`s... see `_Readers`): its fields, and its
+    methods' too (pydantic's `computed_field` reads the return type). Needs the module linked, to
+    follow a class's bases into the other modules of the project.
     """
-    FLAGS = TransformerFlag.REQUIRES_IMPORT_RESOLVE
+    FLAGS = TransformerFlag.REQUIRES_MODULE_RESOLVE
 
     @override
     @classmethod
@@ -35,8 +192,66 @@ class RemoveAnnotations(SuiteTransformer):
     def __init__(self, ctx):
         super().__init__(ctx)
         self._options = RemoveAnnotationOptions() if isinstance(self._config.remove_annotations, bool) else self._config.remove_annotations
+        self._readers = _Readers()
+        self._scopes: list[str] = []
+        # `__qualname__` of the class or function being visited, and if it's a function
+        self._enclosing: tuple[str | None, bool] = (None, False)
+
+    @override
+    def visit_Module(self, node: ast.Module):
+        self._module_ref = ref(node)
+        module_path = str(self._module_ref.spec)
+
+        for pattern in self._config.preserve_annotations:
+            module_pattern, sep, qualname = pattern.partition('::')
+            if fnmatch.fnmatch(module_path, module_pattern):
+                if not sep:
+                    return node  # the whole module
+                self._scopes.append(qualname)
+
+        return super().visit_Module(node)
+
+    def _enter(self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef) -> tuple[str | None, bool]:
+        """Visit `node`'s scope: the enclosing one to go back to after, and if `node` is preserved as a whole"""
+
+        enclosing, in_function = previous = self._enclosing
+        qualname = node.name if enclosing is None else f"{enclosing}.<locals>.{node.name}" if in_function else f"{enclosing}.{node.name}"
+        self._enclosing = qualname, not isinstance(node, ast.ClassDef)
+        return previous
+
+    def _preserved(self) -> bool:
+        return any(fnmatch.fnmatchcase(self._enclosing[0], scope) for scope in self._scopes)
+
+    def _reads_annotations(self, node: ast.ClassDef) -> bool:
+        marked = getattr(ref(node), 'reads_annotations', None)
+        return marked if marked is not None else self._readers(self._module_ref, node)
+
+    @override
+    def visit_ClassDef(self, node):
+        previous = self._enter(node)
+        try:
+            if (
+                self._preserved() or self._reads_annotations(node)
+                or is_hinted(node.decorator_list, "preserve_annotations", self._config)
+            ):
+                return node
+            return super().visit_ClassDef(node)
+        finally:
+            self._enclosing = previous
 
     def visit_FunctionDef(self, node):
+        previous = self._enter(node)
+        try:
+            if self._preserved():
+                return node
+            return self._visit_function(node)
+        finally:
+            self._enclosing = previous
+
+    def visit_AsyncFunctionDef(self, node):
+        return self.visit_FunctionDef(node)
+
+    def _visit_function(self, node):
         preserved = is_hinted(node.decorator_list, "preserve_annotations", self._config)
 
         node.args = node.args if preserved else self.visit_arguments(node.args)
@@ -85,52 +300,15 @@ class RemoveAnnotations(SuiteTransformer):
         return node
 
     def visit_AnnAssign(self, node):
-        def is_dataclass_field(node_ref):
-            if not isinstance(node_ref.parent, ast.ClassDef):
-                return False
-
-            if len(node_ref.parent.decorator_list) == 0:
-                return False
-
-            for decorator_node in node_ref.parent.decorator_list:
-                if isinstance(decorator_node, ast.Name) and decorator_node.id == 'dataclass':
-                    return True
-                elif isinstance(decorator_node, ast.Attribute) and decorator_node.attr == 'dataclass':
-                    return True
-                elif isinstance(decorator_node, ast.Call) and isinstance(decorator_node.func, ast.Name) and decorator_node.func.id == 'dataclass':
-                    return True
-                elif isinstance(decorator_node, ast.Call) and isinstance(decorator_node.func, ast.Attribute) and decorator_node.func.attr == 'dataclass':
-                    return True
-
-            return False
-
-        def is_typing_sensitive(node_ref):
-            if not isinstance(node_ref.parent, ast.ClassDef):
-                return False
-
-            if len(node_ref.parent.bases) == 0:
-                return False
-
-            tricky_types = ['NamedTuple', 'TypedDict']
-
-            for base_node in node_ref.parent.bases:
-                if isinstance(base_node, ast.Name) and base_node.id in tricky_types:
-                    return True
-                elif isinstance(base_node, ast.Attribute) and base_node.attr in tricky_types:
-                    return True
-
-            return False
-
-        # is this a class attribute or a variable?
+        # a class whose annotations are read, or that is preserved, isn't visited at all
         node_ref = ref(node)
         if isinstance(node_ref.parent, ast.ClassDef):
-            if not self._options.remove_attribute_annotations or is_hinted(node_ref.parent.decorator_list, "preserve_annotations", self._config):
+            if not self._options.remove_attribute_annotations:
                 return node
-        else:
-            if not self._options.remove_variable_annotations:
-                return node
+        elif not self._options.remove_variable_annotations:
+            return node
 
-        if is_dataclass_field(node_ref) or is_typing_sensitive(node_ref) or _is_annotated(node.annotation):
+        if _is_annotated(node.annotation):
             return node
         elif node.value:
             return self.add_child(ast.Assign([node.target], node.value), parent=node_ref.parent, namespace=node_ref.namespace)

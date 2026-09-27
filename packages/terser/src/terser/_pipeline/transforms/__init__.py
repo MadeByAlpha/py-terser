@@ -3,7 +3,7 @@ from .contracts import Contracts
 from .combine_imports import CombineImports
 from .constant_folding import FoldConstants
 from .fold_type_checking import FoldTypeChecking
-from .remove_annotations import RemoveAnnotations
+from .remove_annotations import RemoveAnnotations, mark_annotation_readers
 from .remove_asserts import RemoveAsserts
 from .remove_dead_code import RemoveDeadCode
 from .remove_debug import RemoveDebug
@@ -37,7 +37,6 @@ __transforms__ = [
     UnfoldIIFE,
     RemoveTypeStatements,
     ConvertTypingExtensions,
-    RemoveLiteralStatements,
     CombineImports,
     RemovePass,
     RemoveObject,
@@ -47,9 +46,9 @@ __transforms__ = [
     ConvertEarlyExits,
 
     # FLAGS = REQUIRES_IMPORT_RESOLVE
+    RemoveLiteralStatements,
     Contracts,
     ApplyConstantDecorator,
-    RemoveAnnotations,
     ConvertToLambda,
     RemoveDummyAssignments,
     RemoveDocstrings,
@@ -66,6 +65,7 @@ __transforms__ = [
     ConvertToInline,
 
     # FLAGS = REQUIRES_MODULE_RESOLVE
+    RemoveAnnotations,
     RemoveExceptionBrackets,
 
     # FLAGS = INFLUENCES_MANGLING
@@ -73,4 +73,4 @@ __transforms__ = [
     RemoveAll,
 ]
 
-__all__ = ("TransformCache", "__transforms__")
+__all__ = ("TransformCache", "__transforms__", "mark_annotation_readers")

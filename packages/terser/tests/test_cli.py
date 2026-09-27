@@ -234,6 +234,7 @@ def test_every_transform_option_is_forwarded():
         "--convert-dynamic-attribute-access", "False",
         "--remove-dunder-all", "True",
         "--remove-dunder-all-modules", "app.*",
+        "--preserve-annotations", "app.models", "app.deps::Settings",
     )
     expected = TransformConfig(
         passes=2,
@@ -273,6 +274,7 @@ def test_every_transform_option_is_forwarded():
         convert_dynamic_attribute_access=False,
         remove_dunder_all=True,
         remove_dunder_all_modules=["app.*"],
+        preserve_annotations=["app.models", "app.deps::Settings"],
     )
     assert parsed.transform_options == expected
     # make sure this test is updated along with TransformConfig

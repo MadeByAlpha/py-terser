@@ -2,6 +2,7 @@
 import pytest
 
 from helpers import minify_project, read_tree, run_py, write_tree
+from terser.config import RemoveAnnotationOptions, TransformConfig
 
 APP = {
     "main.py": """\
@@ -360,3 +361,17 @@ def test_entry_tree_shaking_through_namespace_package(tmp_path):
 
     assert set(read_tree(out)) == {"main.py", "ns/lib/__init__.py", "ns/lib/data.py"}
     assert run_py("main.py", cwd=out).stdout == "3\n"
+
+
+def test_annotation_readers_across_modules(tmp_path):
+    # `Item` is a pydantic model through a base class of another module: its fields are annotations
+    root = write_tree(tmp_path / "src", {
+        "main.py": "from models.item import Item\nprint(Item(name='a', price='3'))\n",
+        "models/__init__.py": "from .base import Base\n",
+        "models/base.py": "from pydantic import BaseModel\nclass Base(BaseModel):\n    pass\n",
+        "models/item.py": "from models import Base\nclass Item(Base):\n    name: str\n    price: int\n",
+    })
+    out = tmp_path / "out"
+    config = TransformConfig(remove_annotations=RemoveAnnotationOptions(remove_attribute_annotations=True))
+    minify(root, output=out, config=config, entry={"main"}, rename_globals=True, rename_modules=True)
+    assert run_py("main.py", cwd=out).stdout == "name='a' price=3\n"

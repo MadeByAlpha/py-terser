@@ -93,7 +93,7 @@ terser src/ --output build/ --entry app.main
 
 Boolean options can be given alone (`--rename-globals`) or with a value (`--rename-locals False`; `yes`/`no` and
 `1`/`0` also work). Options that accept several values
-(`--preserve-locals`, `--preserve-globals`, `--preserve-modules`, `--preserve-type-checking`, `--entry`, `--contracts`) can be given
+(`--preserve-locals`, `--preserve-globals`, `--preserve-modules`, `--preserve-type-checking`, `--preserve-annotations`, `--entry`, `--contracts`) can be given
 multiple values, and can be repeated.
 
 #### General
@@ -122,7 +122,8 @@ multiple values, and can be repeated.
 | `--remove-variable-annotations`  | `True`  | Remove variable annotations                                                   |
 | `--remove-return-annotations`    | `True`  | Remove return annotations                                                     |
 | `--remove-argument-annotations`  | `True`  | Remove argument annotations                                                   |
-| `--remove-attribute-annotations` | `False` | Remove class attribute annotations                                            |
+| `--remove-attribute-annotations` | `False` | Remove class attribute annotations, except in the classes that read them. See [Keeping annotations](#keeping-annotations) |
+| `--preserve-annotations PATTERN` | —       | Glob patterns over dotted module paths, optionally with `::` and a glob over qualnames; what they match keeps its annotations |
 | `--remove-explicit-base`         | `True`  | Remove explicit base classes (e.g. `class A(object)`)                         |
 | `--remove-explicit-return-none`  | `True`  | Replace `return None` with `return`                                           |
 | `--fold-constants`               | `True`  | Evaluate constant expressions and shrink literals, and decide `and`/`or`/`x if c else y` by their constant operands (`False and x` → `False`) |
@@ -208,6 +209,25 @@ away, so leave it as is in the modules matching `--preserve-type-checking`:
 
 ```shell
 terser src/ --output build/ --preserve-type-checking 'anyio' 'anyio.*'
+```
+
+### Keeping annotations
+
+Some classes are built from the annotations in their body: `x: int = 0` is a field there, `x = 0` a plain class
+attribute. Their annotations are kept, the methods' too (pydantic's `computed_field` reads the return type), when the
+class
+
+- is decorated with `dataclasses.dataclass`, `pydantic.dataclasses.dataclass` or an `attrs` class decorator,
+- or leads, through its bases or metaclass, to `pydantic.BaseModel`, `pydantic.RootModel`, pydantic's `ModelMetaclass`,
+  `pydantic.v1.BaseModel`, `pydantic_settings.BaseSettings`, `sqlmodel.SQLModel`, `msgspec.Struct`, `TypedDict` or
+  `NamedTuple`. In project mode, bases are followed into the other modules of the project.
+
+Other code reading annotations (FastAPI endpoints and dependencies, `inspect.signature()`, `typing.get_type_hints()`)
+keeps them under `@terser_hints.preserve_annotations`, or when `--preserve-annotations` names it:
+
+```shell
+# every annotation of `app.models`, and the ones of `Settings` (and its methods) in `app.deps`
+terser src/ --output build/ --preserve-annotations 'app.models' 'app.deps::Settings'
 ```
 
 ### Tree-shaking
