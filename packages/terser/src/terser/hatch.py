@@ -204,7 +204,6 @@ class TerserBuildHook(BuildHookInterface):
             rename_star_args=self.config.pop("rename_star_args", True),
             prefer_single_line=self.config.pop("prefer_single_line", True),
             entry=set(self.config.pop("entry", [])),
-            **options
         )
 
         return asyncio.run(minify_project(roots, config, reporter))
