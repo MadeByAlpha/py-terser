@@ -112,9 +112,9 @@ class TerserBuildHook(BuildHookInterface):
         if self.app.verbosity < 0:
             return NullReporter()
 
-        # tqdm comes with py-terser, but a build environment only has what `[build-system].requires` lists
+        # tqdm and rich come with py-terser, but a build environment only has what `[build-system].requires` lists
         def warn(message: str) -> None:
-            self.app.display_warning(f'terser: {message}; add "tqdm" to `[build-system].requires` to see it')
+            self.app.display_warning(f'terser: {message}; add "tqdm" and "rich" to `[build-system].requires` to see it')
 
         return auto_reporter("terser: ", warn=warn)
 

@@ -12,7 +12,7 @@ if __debug__ and __import__("typing").TYPE_CHECKING:
 
     from ._reporter import Reporter
 
-MISSING_TQDM = "tqdm is not installed, so only the stages are shown, not their progress"
+MISSING_TQDM = "tqdm or rich is not installed, so only the stages are shown, not their progress"
 
 
 def in_ci() -> bool:
@@ -29,15 +29,15 @@ def auto_reporter(
     warn: Callable[[str], None] | None = None,
 ) -> Reporter:
     """
-    A `TqdmReporter` when tqdm is installed. Otherwise a `LogReporter`: a verbose one in CI (whose
-    logs are read afterwards anyway), else one listing the stages only, after a warning that tqdm is
-    missing.
+    A `TqdmReporter` when tqdm and rich are installed. Otherwise a `LogReporter`: a verbose one in CI
+    (whose logs are read afterwards anyway), else one listing the stages only, after a warning that
+    they are missing.
 
     :param warn: Receives the warning, which is written to `file` by default
     """
 
     try:
-        import tqdm  # noqa: F401
+        import tqdm.rich  # noqa: F401 (needs rich)
     except ImportError:
         pass
     else:

@@ -221,7 +221,7 @@ def test_rollup_progress_without_tqdm(tmp_path, capsys, monkeypatch):
     _build_rollup(tmp_path)
     lines = capsys.readouterr().err.splitlines()
 
-    [warning] = [line for line in lines if "tqdm is not installed" in line]
+    [warning] = [line for line in lines if "tqdm or rich is not installed" in line]
     assert "`[build-system].requires`" in warning
     stages = [line for line in lines if line.startswith("terser: ") and line != warning]
     assert stages[0] == "terser: Extracting wheel"
@@ -235,7 +235,7 @@ def test_rollup_progress_without_tqdm_in_ci(tmp_path, capsys, monkeypatch):
     _build_rollup(tmp_path)
     stderr = capsys.readouterr().err
 
-    assert "tqdm is not installed" not in stderr
+    assert "tqdm or rich is not installed" not in stderr
     assert "terser: Compiling modules: started (3 total)" in stderr
     assert "terser: Rewriting wheel: done " in stderr
 

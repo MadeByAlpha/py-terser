@@ -226,13 +226,15 @@ class ProjectMinifier(Pipeline):
 
         modules: list = [None] * len(self.__module_specs)
         with self.__reporter.stage("Compiling modules", len(modules)) as stage:
+            def __compile(spec: ModuleSpec, /):
+                # in the thread: a module waiting for one is not being compiled yet
+                with stage.item(str(spec)):
+                    return __run(_read(spec.path), spec)
+
             async def __worker(i: int, spec: ModuleSpec, /):
                 # one thread per module, for reading and compiling it
-                module, _ = await to_thread.run_sync(
-                    lambda: __run(_read(spec.path), spec), limiter=self.__limiter,
-                )
+                module, _ = await to_thread.run_sync(__compile, spec, limiter=self.__limiter)
                 modules[i] = module
-                stage.advance()
 
             async with _task_group() as tg:
                 for i, spec in enumerate(self.__module_specs):
@@ -305,15 +307,19 @@ class ProjectMinifier(Pipeline):
             outputs[str(ffi_spec.path)] = str(dest)
 
         with self.__reporter.stage("Writing output", len(modules) + len(self.__ffi_specs)) as stage:
-            async def advancing[T](func: Callable[[T], None], t: T, /):
+            def write[T](func: Callable[[T], None], t: T, name: str, /):
+                # in the thread: a file waiting for one is not being written yet
+                with stage.item(name):
+                    func(t)
+
+            async def writer[T](func: Callable[[T], None], t: T, name: str, /):
                 # one thread per file, for everything writing it takes
-                await to_thread.run_sync(func, t, limiter=self.__limiter)
-                stage.advance()
+                await to_thread.run_sync(write, func, t, name, limiter=self.__limiter)
 
             async with _task_group() as tg:
                 for node in modules:
-                    tg.start_soon(advancing, module, node)
+                    tg.start_soon(writer, module, node, str(ref(node).spec))
                 for ffi_spec in self.__ffi_specs:
-                    tg.start_soon(advancing, binary, ffi_spec)
+                    tg.start_soon(writer, binary, ffi_spec, str(ffi_spec))
 
         return outputs

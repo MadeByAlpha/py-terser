@@ -5,7 +5,8 @@ A `Reporter` opens one `Stage` at a time; a stage counts `total` units of work, 
 `Stage.advance()` (which may be called from any thread). Stages are context managers: leaving one
 normally marks it complete, leaving it by an exception leaves it where it stopped.
 
-`TqdmReporter` needs tqdm, which is optional; `auto_reporter()` falls back to `LogReporter` without it.
+`TqdmReporter` needs tqdm and rich, which are optional; `auto_reporter()` falls back to `LogReporter`
+without them.
 """
 
 from ._auto import auto_reporter, in_ci
@@ -27,7 +28,7 @@ if __debug__ and __import__("typing").TYPE_CHECKING:
 
 
 def __getattr__(name: str):
-    # imported on first use only, so that this package works without tqdm
+    # imported on first use only, so that this package works without tqdm and rich
     if name == "TqdmReporter":
         from ._tqdm import TqdmReporter
 

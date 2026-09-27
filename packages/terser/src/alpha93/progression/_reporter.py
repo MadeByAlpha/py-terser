@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import warnings
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, final, override
 
 if __debug__ and TYPE_CHECKING:
@@ -23,12 +24,34 @@ class Stage(ABC):
     def _close(self, completed: bool, /) -> None:
         ...
 
+    def _begin(self, item: str, /) -> None:
+        """`item` is being worked on from now. Thread-safe."""
+
+    def _end(self, item: str, /) -> None:
+        """`item` is no longer being worked on. Thread-safe."""
+
     def iter[T](self, iterable: Iterable[T], /) -> Iterator[T]:
         """Yield from `iterable`, counting an item as done once the loop body moves past it."""
 
         for item in iterable:
             yield item
             self.advance()
+
+    @final
+    @contextmanager
+    def item(self, name: str, /) -> Iterator[None]:
+        """
+        Work on one unit of the stage (e.g. a file) in the block: shown by name while in it, where
+        the reporter shows what is being worked on, and counted as done once the block is left
+        normally. Thread-safe, so units may be worked on concurrently.
+        """
+
+        self._begin(name)
+        try:
+            yield
+        finally:
+            self._end(name)
+        self.advance()
 
     @final
     def __enter__(self) -> Self:

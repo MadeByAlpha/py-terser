@@ -37,6 +37,7 @@ dependencies = [
     "alpha93>=1.2.5",
     "anyio>=4.14.2",
     "hatchling>=1.17",
+    "rich>=14.1",
     "tqdm>=4.68.4",
 ]
 

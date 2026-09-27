@@ -1,4 +1,5 @@
 import io
+import re
 import sys
 import threading
 import time
@@ -92,10 +93,60 @@ class Terminal(io.StringIO):
         return True
 
 
-def test_tqdm_draws_at_once_on_terminal():
-    out = Terminal()
-    with TqdmReporter(file=out) as reporter, reporter.stage("Counting", 3):
-        assert "Counting:   0%" in out.getvalue()
+@pytest.fixture
+def terminal(monkeypatch):
+    # rich draws nothing until the end on a terminal it takes for a dumb one
+    monkeypatch.setenv("TERM", "xterm")
+    return Terminal()
+
+
+def _lines(out):
+    """Every line drawn, without escape sequences (e.g. colors, or the cursor moving to redraw)."""
+    return re.split(r"[\r\n]", re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", out.getvalue()))
+
+
+def _drawn(out, pattern):
+    return any(re.match(pattern, line) for line in _lines(out))
+
+
+def test_stage_item_counts_when_done():
+    stage = RecordingReporter().stage("Items", 2)
+    with stage.item("a"):
+        pass
+    with pytest.raises(ValueError), stage.item("b"):
+        raise ValueError
+    assert stage.done == 1
+
+
+def test_tqdm_draws_at_once_on_terminal(terminal):
+    with TqdmReporter(file=terminal) as reporter, reporter.stage("Counting", 3):
+        assert _drawn(terminal, r"Counting +0% .* 0/3 ")
+
+
+def test_tqdm_terminal_shows_items(terminal):
+    with TqdmReporter("tool: ", file=terminal) as reporter, reporter.stage("Compiling", 3) as stage:
+        with stage.item("pkg.a"), stage.item("pkg.b"):
+            assert _drawn(terminal, r"tool: 2 in progress: pkg\.a, pkg\.b *$")
+        with stage.item("pkg.c"):
+            assert _drawn(terminal, r"tool: 1 in progress: pkg\.c *$")
+        # counted once done
+        assert stage._TqdmStage__bar.n == 3
+
+    # not left behind
+    assert "in progress" not in terminal.getvalue().rsplit("\n", 1)[-1]
+
+
+def test_tqdm_terminal_warns_above_bars(terminal):
+    with (
+        TqdmReporter("tool: ", file=terminal) as reporter,
+        reporter.stage("Compiling", 2) as stage,
+        stage.item("pkg.a"),
+    ):
+        reporter.warn("something odd")
+        assert _drawn(terminal, r"tool: warning: something odd$")
+        # the bars and the line of items, drawn again below it
+        after = terminal.getvalue().rsplit("something odd", 1)[1]
+        assert "Compiling" in after and "1 in progress: pkg.a" in after
 
 
 def test_tqdm_stage_finished_early_is_complete():
@@ -152,7 +203,7 @@ def test_tqdm_draws_on_unsized_terminal():
         os.close(master)
         os.close(slave)
 
-    assert "Counting:" in drawn.decode()
+    assert "Counting" in drawn.decode()
 
 
 @pytest.fixture
@@ -198,15 +249,24 @@ def test_auto_reporter_without_tqdm_outside_ci(no_tqdm, monkeypatch):
         with reporter.stage("Waiting"):
             pass
 
-    assert warnings == ["tqdm is not installed, so only the stages are shown, not their progress"]
+    assert warnings == ["tqdm or rich is not installed, so only the stages are shown, not their progress"]
     assert out.getvalue() == "tool: Counting\ntool: Waiting\n"
+
+
+def test_auto_reporter_without_rich(monkeypatch):
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.setitem(sys.modules, "rich", None)
+    monkeypatch.setitem(sys.modules, "tqdm.rich", None)
+    warnings = []
+    assert isinstance(auto_reporter(file=io.StringIO(), warn=warnings.append), LogReporter)
+    assert warnings == ["tqdm or rich is not installed, so only the stages are shown, not their progress"]
 
 
 def test_auto_reporter_warns_on_file_by_default(no_tqdm, monkeypatch):
     monkeypatch.delenv("CI", raising=False)
     out = io.StringIO()
     auto_reporter("tool: ", file=out)
-    assert out.getvalue() == "tool: warning: tqdm is not installed, so only the stages are shown, not their progress\n"
+    assert out.getvalue() == "tool: warning: tqdm or rich is not installed, so only the stages are shown, not their progress\n"
 
 
 def _verbose_lines(run):
@@ -282,64 +342,55 @@ def test_plan_first_call_counts():
     assert reporter.planned == 11
 
 
-def _frames(out):
-    return out.getvalue().replace("\x1b[A", "").split("\r")
+def _last(out):
+    return [line for line in _lines(out) if line.strip()][-1]
 
 
-def test_tqdm_terminal_shows_run_and_stage():
-    out = Terminal()
-    with TqdmReporter("tool: ", file=out) as reporter:
+def test_tqdm_terminal_shows_run_and_stage(terminal):
+    with TqdmReporter("tool: ", file=terminal) as reporter:
         reporter.plan(2)
         with reporter.stage("Counting", 4) as stage:
             time.sleep(0.15)  # past the bars' redraw interval
             stage.advance(2)
-            frames = _frames(out)
             # the run's bar: half of the first of two stages
-            assert any(frame.startswith("tool:  25%|") and "| 1/2 [" in frame for frame in frames)
-            assert any(frame.startswith("tool: Counting:  50%|") and "2/4" in frame for frame in frames)
+            assert _drawn(terminal, r"tool: +25% .* 1/2 \[")
+            assert _drawn(terminal, r"tool: Counting +50% .* 2/4 ")
             stage.advance(2)
         with reporter.stage("Waiting"):
-            assert any(frame.startswith("tool:  50%|") and "| 2/2 [" in frame for frame in _frames(out))
+            assert _drawn(terminal, r"tool: +50% .* 2/2 \[")
 
-    last = [frame for frame in _frames(out) if frame.strip()][-1]
-    assert last.startswith("tool: 100%|") and "| 2/2 [" in last
+    assert re.match(r"tool: +100% .* 2/2 \[", _last(terminal))
 
 
-def test_tqdm_terminal_failed_run_stays_where_it_stopped():
-    out = Terminal()
-    with pytest.raises(ValueError), TqdmReporter(file=out) as reporter:
+def test_tqdm_terminal_failed_run_stays_where_it_stopped(terminal):
+    with pytest.raises(ValueError), TqdmReporter(file=terminal) as reporter:
         reporter.plan(4)
         with reporter.stage("Done"):
             pass
         with reporter.stage("Failing", 2):
             raise ValueError
 
-    last = [frame for frame in _frames(out) if frame.strip()][-1]
-    assert last.startswith(" 25%|") and "| 2/4 [" in last
+    assert re.match(r" *25% .* 2/4 \[", _last(terminal))
 
 
-def test_tqdm_terminal_unplanned_run_counts_stages():
-    out = Terminal()
-    with TqdmReporter(file=out) as reporter:
+def test_tqdm_terminal_unplanned_run_counts_stages(terminal):
+    with TqdmReporter(file=terminal) as reporter:
         for name in ("One", "Two"):
             with reporter.stage(name):
                 pass
 
-    frames = _frames(out)
-    assert any(frame.startswith("stage 2 [") for frame in frames)
-    assert "%" not in "".join(frame for frame in frames if frame.startswith("stage"))
+    assert _drawn(terminal, r" *stage 2 \[")
+    assert "%" not in "".join(line for line in _lines(terminal) if "stage" in line)
 
 
-def test_tqdm_terminal_more_stages_than_planned():
-    out = Terminal()
-    with TqdmReporter(file=out) as reporter:
+def test_tqdm_terminal_more_stages_than_planned(terminal):
+    with TqdmReporter(file=terminal) as reporter:
         reporter.plan(1)
         for name in ("One", "Two"):
             with reporter.stage(name):
                 pass
 
-    last = [frame for frame in _frames(out) if frame.strip()][-1]
-    assert last.startswith("100%|") and "| 2/2 [" in last
+    assert re.match(r" *100% .* 2/2 \[", _last(terminal))
 
 
 @pytest.mark.parametrize("workers", [1, 3])

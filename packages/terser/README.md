@@ -241,8 +241,9 @@ Supported keys:
   table of the four `remove_*_annotations` options.
 
 The hook shows its progress on stderr; `hatch build -q` (or `HATCH_QUIET=1`) turns it off. On a terminal, the top bar
-shows the whole build (every stage counted alike) and the one below the current stage; elsewhere, each stage leaves one
-line when done. Progress bars need `tqdm`; when the build environment lacks it, the hook lists the stages as they start
+shows the whole build (every stage counted alike), the one below the current stage, and the line below them the modules
+being compiled or written; elsewhere, each stage leaves one line when done. Progress bars need `tqdm` and `rich`; when
+the build environment lacks them, the hook lists the stages as they start
 after a warning, or, in CI (the `CI` environment variable is set), reports each stage's progress every tenth as plain
 lines.
 
