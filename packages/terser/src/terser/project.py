@@ -140,8 +140,6 @@ class ProjectMinifier(Pipeline[_Context]):
         config: Config,
         /,
         reporter: Reporter | None = None,
-        *args,
-        **kwargs
     ):
         """
         Minify the modules under `paths` as one project.
@@ -161,7 +159,7 @@ class ProjectMinifier(Pipeline[_Context]):
         await pp.resolve()
 
         # noinspection argument-list
-        return await cls(pp, config, reporter, *args, **kwargs)()
+        return await cls(pp, config, reporter)()
 
     async def __call__(self, /) -> dict[str, str | None]:
         await typed[MinifyModuleStep](MinifyModuleStep.__init__)(self, self._ctx)()

@@ -185,18 +185,29 @@ class TerserBuildHook(BuildHookInterface):
         config_opts = dict(self.config.get("config", {}))
         if isinstance(remove_annotations := config_opts.get("remove_annotations"), dict):
             config_opts["remove_annotations"] = RemoveAnnotationOptions(**remove_annotations)
+
         config = Config(
             output_path=anyio.Path(out_dir),
+            defines=self.config.pop("defines", {}),
+            workers=self.config.pop("workers", None),
+            strict=self.config.pop("strict", False),
             transform=TransformConfig(**config_opts),
-            hoist_literals=self.config.get("hoist_literals", True),
-            rename_locals=self.config.get("rename_locals", True),
-            preserve_locals=self.config.get("preserve_locals", {}),
-            rename_star_args=self._option("rename_star_args", lambda v: type(v) is bool, "a boolean", True),
-            rename_globals=self.config.get("rename_globals", False),
-            preserve_globals=self.config.get("preserve_globals", {}),
+            rename_locals=self.config.pop("rename_locals", True),
+            preserve_locals=self.config.pop("preserve_locals", {}),
+            rename_globals=self.config.pop("rename_globals", False),
+            preserve_globals=self.config.pop("preserve_globals", {}),
+            rename_modules=self.config.pop("rename_modules", False),
+            preserve_modules=set(self.config.pop("preserve_modules", [])),
+            preserve_shebang=self.config.pop("preserve_shebang", True),
+            preserve_type_checking=set(self.config.pop("preserve_type_checking", [])),
+            hoist_literals=self.config.pop("hoist_literals", True),
+            rename_star_args=self.config.pop("rename_star_args", True),
+            prefer_single_line=self.config.pop("prefer_single_line", True),
+            entry=set(self.config.pop("entry", [])),
+            **options
         )
 
-        return asyncio.run(minify_project(roots, config, reporter, **options))
+        return asyncio.run(minify_project(roots, config, reporter))
 
     def _minify_wheel(self, path: str, reporter: Reporter) -> None:
         """Minify every module of a built wheel in place (as one project), and rewrite its `RECORD`."""
