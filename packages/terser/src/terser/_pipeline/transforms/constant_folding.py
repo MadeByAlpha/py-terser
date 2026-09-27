@@ -29,6 +29,26 @@ def _is_unshadowed_builtin(node, name: str) -> bool:
     return isinstance(binding, BuiltinBinding) and binding.name == name and not binding.is_redefined()
 
 
+def is_provably_bool(node) -> bool:
+    """
+    Check if a node's value is guaranteed to be a bool, syntactically.
+
+    Used to guard `X is True`/`X is False`-style folding: swapping an identity/equality
+    check for a bare truthiness check is only sound when `X` can't be some other
+    truthy/falsy-but-not-actually-bool value.
+    """
+    if is_constant_node(node, ast.NameConstant) and isinstance(node.value, bool):
+        return True
+
+    if isinstance(node, ast.Compare):
+        return True
+
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        return True
+
+    return False
+
+
 def is_foldable_constant(node):
     """
     Check if a node is a constant expression that can participate in folding.
@@ -215,6 +235,14 @@ class FoldConstants(SuiteTransformer):
             return node
 
         bool_value, other = (left.value, right) if left_bool else (right.value, left)
+
+        # `X is True` -> `X` (and similar) is only sound if `X` is itself
+        # guaranteed to be a bool - otherwise it swaps an identity/equality
+        # check for a truthiness check, which differ for any non-bool value
+        # (e.g. `0 is False` is False, but `not 0` is True).
+        if not is_provably_bool(other):
+            return node
+
         negate = bool_value == isinstance(node.ops[0], (ast.NotEq, ast.IsNot))
 
         new_node = ast.UnaryOp(op=ast.Not(), operand=other) if negate else other

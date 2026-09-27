@@ -79,8 +79,11 @@ class TransformConfig:
     unfold_iife_lambdas: bool = True
     """Inline immediately-invoked no-arg lambda calls, e.g. `(lambda: x)()` -> `x`"""
 
-    remove_type_statements: bool = True
-    """Remove `type X = ...` alias statements"""
+    remove_type_statements: bool = False
+    """Remove `type X = ...` alias statements. Unsafe by default: this runs pre-transform
+    (before even per-module name resolution), so it can't tell whether the alias is
+    actually imported/used by another module at runtime - only enable this if no `type`
+    statement in the project is relied on outside of typing contexts"""
 
     convert_early_exits: bool = True
     """Merge `if cond: return a` followed by `return b` into `return a if cond else b`"""
