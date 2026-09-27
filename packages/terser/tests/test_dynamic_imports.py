@@ -13,7 +13,7 @@ from terser._pipeline.dynamic_imports import Callee
 from terser.ast import ref
 from terser.exceptions import DynamicImportWarning
 
-PACKAGE = {"pkg/__init__.py": "", **{f"pkg/{name}.py": f'X = "{name}"\n' for name in ("alpha", "beta", "gamma", "delta")}}
+PACKAGE = {"pkg/__init__.py": "", **{f"pkg/{name}.py": f'VALUE = "{name}"\n' for name in ("alpha", "beta", "gamma", "delta")}}
 
 LITERALS = """\
 import importlib
@@ -22,8 +22,8 @@ from importlib import import_module as load
 a = __import__("pkg.alpha")                              # returns `pkg`
 b = importlib.import_module("pkg.beta")                  # returns `pkg.beta`
 c = load(".gamma", "pkg")                                # relative, with a literal package
-d = __import__("pkg.delta", fromlist=["X"])              # returns `pkg.delta`
-print(a.alpha.X, b.X, c.X, d.X, __import__("pkg", fromlist=["beta"]).beta.X)
+d = __import__("pkg.delta", fromlist=["VALUE"])              # returns `pkg.delta`
+print(a.alpha.VALUE, b.VALUE, c.VALUE, d.VALUE, __import__("pkg", fromlist=["beta"]).beta.VALUE)
 """
 
 EXPECTED = "alpha beta gamma delta beta\n"
@@ -55,13 +55,13 @@ def test_literals(tmp_path, options):
     if options.get("rename_modules"):
         assert "pkg" not in tree["main.py"]
     if options.get("rename_globals"):
-        # `X` was renamed, and every attribute access through what the calls return followed
-        assert "X=" not in "".join(tree[f"pkg/{name}.py"] for name in ("alpha", "beta", "gamma", "delta"))
+        # `VALUE` was renamed, and every attribute access through what the calls return followed
+        assert "VALUE=" not in "".join(tree[f"pkg/{name}.py"] for name in ("alpha", "beta", "gamma", "delta"))
 
 
 def test_entry_keeps_what_literals_import(tmp_path):
     root = write_tree(tmp_path / "src", {
-        "main.py": 'import importlib\nprint(importlib.import_module("pkg.beta").X)\n', **PACKAGE,
+        "main.py": 'import importlib\nprint(importlib.import_module("pkg.beta").VALUE)\n', **PACKAGE,
     })
     tree = minify(root, tmp_path / "out", entry={"main"})
     assert set(tree) == {"main.py", "pkg/__init__.py", "pkg/beta.py"}
@@ -74,8 +74,8 @@ def test_relative_to_own_package(tmp_path):
             "import importlib\n\n\n"
             "def run():\n"
             "    first = importlib.import_module('.beta', __package__)\n"
-            "    second = __import__('gamma', globals(), None, ['X'], 1)\n"
-            "    return first.X + second.X\n"
+            "    second = __import__('gamma', globals(), None, ['VALUE'], 1)\n"
+            "    return first.VALUE + second.VALUE\n"
         ),
         **{k: v for k, v in PACKAGE.items() if k != "pkg/__init__.py"},
     })
@@ -87,7 +87,7 @@ def test_relative_to_own_package(tmp_path):
 def test_literals_are_not_hoisted(tmp_path):
     # hoisting a literal repeated this often in a function would take it out of the calls
     source = "import importlib\n\n\ndef run():\n" + "".join(
-        f'    print(importlib.import_module("pkg.alpha").X, "pkg.alpha", {i})\n' for i in range(6)
+        f'    print(importlib.import_module("pkg.alpha").VALUE, "pkg.alpha", {i})\n' for i in range(6)
     ) + "\n\nrun()\n"
     root = write_tree(tmp_path / "src", {"main.py": source, **PACKAGE})
     tree = minify(root, tmp_path / "out", rename_modules=True, preserve_modules={"main"})
@@ -114,7 +114,7 @@ def test_lazy_import_is_followed():
     # module level only: that's where `__lazy_import__()` works
     source = (
         'a = __lazy_import__("pkg.alpha")\n'
-        'b = __lazy_import__("pkg.delta", globals(), None, ("X",), 0)\n'
+        'b = __lazy_import__("pkg.delta", globals(), None, ("VALUE",), 0)\n'
         'c = __lazy_import__(a.name)\n'
     )
     module, _ = minify_module(source, "pkg.main", TransformConfig(), rename=False, hoist_literals=False)
@@ -165,7 +165,7 @@ def test_reporters_write_warnings(reporter):
 
 
 def test_rename_modules_and_globals_attribute_chain(tmp_path):
-    root = write_tree(tmp_path / "src", {"main.py": "import pkg.alpha\nprint(pkg.alpha.X)\n", **PACKAGE})
+    root = write_tree(tmp_path / "src", {"main.py": "import pkg.alpha\nprint(pkg.alpha.VALUE)\n", **PACKAGE})
     minify(root, tmp_path / "out", rename_modules=True, rename_globals=True, preserve_modules={"main"})
     assert run_py("main.py", cwd=tmp_path / "out").stdout == "alpha\n"
 

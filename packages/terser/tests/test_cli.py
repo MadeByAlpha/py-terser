@@ -4,7 +4,7 @@ import dataclasses
 import pytest
 
 from helpers import read_tree, run_py, run_terser, write_tree
-from terser.config import RemoveAnnotationOptions, TransformConfig
+from terser.config import RemoveAnnotationOptions, RemoveDocstringOptions, TransformConfig
 
 SOURCE = """\
 #!/usr/bin/env python3
@@ -213,6 +213,27 @@ def test_every_transform_option_is_forwarded():
         "--convert-pass", "False",
         "--remove-empty-exc-brackets", "False",
         "--convert-posargs", "False",
+        "--hint-modules", "my.hints",
+        "--target-version", "3", "12",
+        "--unfold-iife-lambdas", "False",
+        "--remove-type-statements", "True",
+        "--convert-early-exits", "False",
+        "--convert-to-inline", "False",
+        "--convert-to-lambda", "False",
+        "--remove-dummy-assignments", "False",
+        "--remove-docstrings", "True",
+        "--also-modules", "True",
+        "--respect-all", "True",
+        "--cleanup-local-imports", "False",
+        "--remove-typing-decorators", "False",
+        "--remove-overloads", "False",
+        "--remove-generics", "False",
+        "--remove-typing-classes", "True",
+        "--convert-typing-constructors", "False",
+        "--convert-typing-extensions", "False",
+        "--convert-dynamic-attribute-access", "False",
+        "--remove-dunder-all", "True",
+        "--remove-dunder-all-modules", "app.*",
     )
     expected = TransformConfig(
         passes=2,
@@ -232,6 +253,26 @@ def test_every_transform_option_is_forwarded():
         convert_pass=False,
         remove_empty_exc_brackets=False,
         convert_posargs=False,
+        hint_modules=["my.hints"],
+        target_version=(3, 12),
+        unfold_iife_lambdas=False,
+        remove_type_statements=True,
+        convert_early_exits=False,
+        convert_to_inline=False,
+        convert_to_lambda=False,
+        remove_dummy_assignments=False,
+        remove_docstrings=RemoveDocstringOptions(also_modules=True),
+        respect_all=True,
+        cleanup_local_imports=False,
+        remove_typing_decorators=False,
+        remove_overloads=False,
+        remove_generics=False,
+        remove_typing_classes=True,
+        convert_typing_constructors=False,
+        convert_typing_extensions=False,
+        convert_dynamic_attribute_access=False,
+        remove_dunder_all=True,
+        remove_dunder_all_modules=["app.*"],
     )
     assert parsed.transform_options == expected
     # make sure this test is updated along with TransformConfig

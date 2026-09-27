@@ -277,13 +277,13 @@ def test_renamed_root_package_binds_no_other_name(tmp_path, rename_globals):
 
 def test_rename_globals_follows_function_level_imports(tmp_path):
     root = write_tree(tmp_path / "src", {
-        "main.py": "def f():\n    import pkg.alpha\n    return pkg.alpha.X\nprint(f())\n",
+        "main.py": "def f():\n    import pkg.alpha\n    return pkg.alpha.VALUE\nprint(f())\n",
         "pkg/__init__.py": "",
-        "pkg/alpha.py": 'X = "a"\n',
+        "pkg/alpha.py": 'VALUE = "a"\n',
     })
     out = tmp_path / "out"
     minify(root, output=out, rename_globals=True)
-    assert "X=" not in read_tree(out)["pkg/alpha.py"]
+    assert "VALUE=" not in read_tree(out)["pkg/alpha.py"]
     assert run_py("main.py", cwd=out).stdout == "a\n"
 
 
