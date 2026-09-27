@@ -12,6 +12,9 @@ def _valid_attr_name(node: ast.expr) -> str | None:
         return None
 
     name = node.value
+    if name.startswith('__') and not name.endswith('__'):
+        # `obj.__name` is mangled to `obj._Class__name` in a class, the string never is
+        return None
     return name if name.isidentifier() and not keyword.iskeyword(name) else None
 
 

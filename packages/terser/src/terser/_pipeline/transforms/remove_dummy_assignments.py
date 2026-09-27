@@ -12,9 +12,13 @@ def _binding_of(node):
         return None
 
 
+def _is_load(node) -> bool:
+    return isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+
+
 class RemoveDummyAssignments(SuiteTransformer):
     """
-    Remove self-assignments like `x = x`
+    Remove self-assignments like `x = x`, of a name bound elsewhere too, outside a class body
     """
     FLAGS = TransformerFlag.REQUIRES_IMPORT_RESOLVE
 
@@ -44,4 +48,13 @@ class RemoveDummyAssignments(SuiteTransformer):
         # some mangler-synthesized nodes are never fully registered with a NodeRef/binding
         # (e.g. an aliasing assignment for a keyword-callable renamed parameter) - if we
         # can't resolve both sides, we can't prove this is a genuine dummy assignment
-        return target_binding is not None and target_binding is _binding_of(value)
+        if target_binding is None or target_binding is not _binding_of(value):
+            return False
+
+        if isinstance(ref(target).namespace, ast.ClassDef):
+            # `print = print` in a class body makes a class attribute of what it reads
+            return False
+
+        # the name must be bound elsewhere too: `print = print` alone makes a module global of a
+        # builtin, and `x = x` alone in a function raises `UnboundLocalError`
+        return any(other is not target and not _is_load(other) for other in target_binding.references)
