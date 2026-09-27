@@ -30,7 +30,7 @@ All entries below are implemented and registered in `__transforms__` (`__init__.
 - Fold `TYPE_CHECKING` (`fold_type_checking.py`, `FoldTypeChecking`) `(Flags.REQUIRES_IMPORT_RESOLVE)` - `config.fold_type_checking`. `typing.TYPE_CHECKING` (also `typing_extensions`', and through a dynamic import like `__import__("typing").TYPE_CHECKING`) becomes `False`, and `typing` imports left unused are removed. Modules matching `Config.preserve_type_checking` are left alone.
 - Remove dead code (`remove_dead_code.py`, `RemoveDeadCode`) `(Flags.REQUIRES_IMPORT_RESOLVE)` - `config.remove_dead_code`. Removes the branches of `if`/`while` whose condition is known, unless that changes how the function compiles.
 - Convert early exits (`convert_early_exits.py`, `ConvertEarlyExits`) - `config.convert_early_exits`. Merges `if cond: return a` immediately followed by `return b` into `return a if cond else b`.
-- Convert to inline (`convert_to_inline.py`, `ConvertToInline`) - `config.convert_to_inline`.
+- Convert to inline (`convert_to_inline.py`, `ConvertToInline`) `(Flags.REQUIRES_IMPORT_RESOLVE)` - `config.convert_to_inline`. Runs after `RemoveDeadCode`.
     - `if cond: func(x)` -> `cond and func(x)`
     - `if fizz: foo()` / `else: bar()` -> `foo() if fizz else bar()`
 - Convert to lambda (`convert_to_lambda.py`, `ConvertToLambda`) - `config.convert_to_lambda`. `def foo(...): return expr` -> `foo = lambda ...: expr` (only for a single `return <expr>` body - a bare trailing expression isn't converted, since a lambda's value differs from a statement's implicit `None`).

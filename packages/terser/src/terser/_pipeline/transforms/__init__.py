@@ -45,7 +45,6 @@ __transforms__ = [
     RemoveDebug,
     RemoveExplicitReturnNone,
     ConvertEarlyExits,
-    ConvertToInline,
 
     # FLAGS = REQUIRES_IMPORT_RESOLVE
     Contracts,
@@ -64,6 +63,7 @@ __transforms__ = [
     FoldTypeChecking,
     FoldConstants,
     RemoveDeadCode,
+    ConvertToInline,
 
     # FLAGS = REQUIRES_MODULE_RESOLVE
     RemoveExceptionBrackets,

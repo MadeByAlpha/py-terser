@@ -3,15 +3,18 @@ from typing import override
 from terser.ast import ast, ref
 from terser.ast.ref._node import NodeRef
 from terser.config import TransformConfig
-from ._suite import SuiteTransformer
+from ._suite import SuiteTransformer, TransformerFlag
 
 
 class ConvertToInline(SuiteTransformer):
     """
     Convert `if cond: func(x)` to `cond and func(x)`, and
     `if fizz: foo()` / `else: bar()` to `foo() if fizz else bar()`
+
+    Runs after `RemoveDeadCode`, so an `if` whose condition is known is removed rather than
+    turned into an expression statement (`False and f()`) nothing removes.
     """
-    FLAGS = 0
+    FLAGS = TransformerFlag.REQUIRES_IMPORT_RESOLVE
 
     @override
     @classmethod
@@ -23,15 +26,10 @@ class ConvertToInline(SuiteTransformer):
         Wrap `expr` (brand new, but holding *reused* subtrees like the `if`'s own test/body)
         in an `Expr` statement.
 
-        This runs pre-resolve (`FLAGS = 0`), before names have been bound at all - `add_child`
-        would work here too, but its full recursive re-registration walk calls `bind_names` on
-        the reused subtrees as if they were brand new. At this point in the file, a name a reused
-        subtree references (e.g. a module imported earlier in the file) may not have its real
-        binding yet, so that premature bind creates a placeholder `UnresolvedBinding` which then
-        squats the name - once the real declaration is bound later, resolution finds the
-        placeholder already there and never upgrades it, breaking any later `qualified_name`-based
-        check on it. Only the genuinely new nodes here (`expr`, the `Expr` wrapper) need a fresh
-        `NodeRef`; the reused ones just need their `parent` pointer updated.
+        `add_child` would re-register the reused subtrees as if they were brand new, binding
+        their references a second time (inflating e.g. a builtin's reference count). Only the
+        genuinely new nodes here (`expr`, the `Expr` wrapper) need a fresh `NodeRef`; the reused
+        ones just need their `parent` pointer updated.
         """
         new_node = ast.Expr(value=expr)
 
