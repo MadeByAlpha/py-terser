@@ -13,14 +13,25 @@ well, unresolved, for the pipeline to warn about when it relies on knowing every
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from enum import StrEnum
+
+from alpha93.commons.types import any_object
 
 from terser.ast import ast, ref
-from .resolver.binding import BuiltinBinding, ImportBinding
+
+from .resolver.binding import ImportBinding
 
 if __debug__ and __import__("typing").TYPE_CHECKING:
+    from collections.abc import Callable
+    from typing import TypeGuard
+
     from terser.ast import ModuleRef
 
+
+class Callee(StrEnum):
+    DUNDER_IMPORT = "__import__"
+    DUNDER_LAZY_IMPORT = "__lazy_import__"
+    IMPORT_MODULE = "importlib.import_module"
 
 class DynamicImport:
     """
@@ -42,24 +53,34 @@ class DynamicImport:
     """
 
     __slots__ = (
-        'call', 'callee', 'name', 'package', 'dots', 'path', 'fromlist', 'returned', 'roots',
-        'target', 'returns', 'submodules',
+        'call',
+        'callee',
+        'dots',
+        'fromlist',
+        'name',
+        'package',
+        'path',
+        'returned',
+        'returns',
+        'roots',
+        'submodules',
+        'target',
     )
 
     def __init__(self, call: ast.Call, callee: str):
         self.call = call
         self.callee = callee
-        self.name: ast.Constant | None = None
-        self.package: ast.Constant | None = None
+        self.name: ast.Str | None = None
+        self.package: ast.Str | None = None
         self.dots = 0
         self.path: str | None = None
-        self.fromlist: list[ast.Constant] = []
+        self.fromlist: list[ast.Str] = []
         self.returned: str | None = None
         self.roots: list[ast.AST] = []
 
         self.target: ModuleRef | None = None
         self.returns: ModuleRef | None = None
-        self.submodules: dict[ast.Constant, ModuleRef] = {}
+        self.submodules: dict[ast.Str, ModuleRef] = {}
 
     @property
     def literals(self) -> list[ast.Constant]:
@@ -71,33 +92,35 @@ class DynamicImport:
     def location(self) -> str:
         return f"line {self.call.lineno}" if hasattr(self.call, 'lineno') else "somewhere"
 
+__str: Callable[[ast.AST | None], ast.Str | None] = (
+    lambda node: any_object(node if isinstance(node, ast.Constant) and isinstance(node.value, str) else None)
+)
 
-def _string(node: ast.AST | None) -> ast.Constant | None:
-    return node if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+__all_str: Callable[[list[ast.expr]], TypeGuard[list[ast.Constant]]] = any_object(
+    lambda nodes: all(__str(e) for e in nodes)
+)
+
+__args: Callable[[ast.Call, int, str], ast.AST | None] = lambda call, position, keyword: \
+        call.args[position] if len(call.keywords) > position and call.keywords[position].arg == keyword else None
 
 
-def _argument(call: ast.Call, position: int, keyword: str) -> ast.AST | None:
-    if len(call.args) > position:
-        return call.args[position]
-    return next((kw.value for kw in call.keywords if kw.arg == keyword), None)
-
-
-def _callee(call: ast.Call) -> str | None:
+def __callee(call: ast.Call) -> Callee | None:
     """`__import__`/`importlib.import_module`, if that's what `call` calls."""
 
     func = call.func
 
     if isinstance(func, ast.Name):
         binding = ref(func).binding
-        if isinstance(binding, BuiltinBinding) and binding.name == '__import__':
-            return '__import__'
+        if callee := Callee._value2member_map_.get(binding):
+            return Callee(callee)
+
         # `from importlib import import_module [as y]`
         if (
             isinstance(binding, ImportBinding) and binding.source_module == 'importlib'
             and isinstance(binding.node, ast.alias) and isinstance(ref(binding.node).parent, ast.ImportFrom)
             and binding.node.name == 'import_module'
         ):
-            return 'importlib.import_module'
+            return Callee.IMPORT_MODULE
 
     # `import importlib [as x]`, then `x.import_module(...)`
     if isinstance(func, ast.Attribute) and func.attr == 'import_module' and isinstance(func.value, ast.Name):
@@ -107,29 +130,29 @@ def _callee(call: ast.Call) -> str | None:
             and isinstance(binding.node, ast.alias) and isinstance(ref(binding.node).parent, ast.Import)
             and binding.node.name == 'importlib'
         ):
-            return 'importlib.import_module'
+            return Callee.IMPORT_MODULE
 
     return None
 
 
-def _resolve(module_ref: ModuleRef, relative: str) -> str | None:
+def __resolve(module_ref: ModuleRef, relative: str) -> str | None:
     try:
         return module_ref.spec.resolve(relative)
     except ImportError:
         return None
 
 
-def _import_module(module_ref: ModuleRef, found: DynamicImport) -> None:
+def __parse_importlib_import(module_ref: ModuleRef, found: DynamicImport) -> None:
     call = found.call
-    if (name := _string(_argument(call, 0, 'name'))) is None or call.args[2:]:
+    if (name := __str(__args(call, 0, 'name'))) is None or call.args[2:]:
         return
 
     stripped = name.value.lstrip('.')
     found.dots = len(name.value) - len(stripped)
 
     if found.dots:
-        package_node = _argument(call, 1, 'package')
-        if (package := _string(package_node)) is not None:
+        package_node = __args(call, 1, 'package')
+        if (package := __str(package_node)) is not None:
             # `importlib.util.resolve_name()`, without importing anything
             parts = package.value.split('.')
             if found.dots > len(parts):
@@ -139,7 +162,7 @@ def _import_module(module_ref: ModuleRef, found: DynamicImport) -> None:
             found.package = package
         elif isinstance(package_node, ast.Name) and package_node.id == '__package__':
             # this module's own package: resolved the way a relative import statement is
-            path = _resolve(module_ref, name.value)
+            path = __resolve(module_ref, name.value)
         else:
             return
     else:
@@ -149,12 +172,12 @@ def _import_module(module_ref: ModuleRef, found: DynamicImport) -> None:
         found.name, found.path, found.returned = name, path, path
 
 
-def _dunder_import(module_ref: ModuleRef, found: DynamicImport) -> None:
+def __parse_dunder_import(module_ref: ModuleRef, found: DynamicImport) -> None:
     call = found.call
-    if (name := _string(_argument(call, 0, 'name'))) is None or call.args[5:]:
+    if (name := __str(__args(call, 0, 'name'))) is None or call.args[5:]:
         return
 
-    level_node = _argument(call, 4, 'level')
+    level_node = __args(call, 4, 'level')
     if level_node is None:
         level = 0
     elif isinstance(level_node, ast.Constant) and type(level_node.value) is int and level_node.value >= 0:
@@ -162,10 +185,12 @@ def _dunder_import(module_ref: ModuleRef, found: DynamicImport) -> None:
     else:
         return
 
-    fromlist_node = _argument(call, 3, 'fromlist')
+    fromlist_node = __args(call, 3, 'fromlist')
+
+    fromlist: list[ast.Constant] | None
     if fromlist_node is None or (isinstance(fromlist_node, ast.Constant) and fromlist_node.value is None):
         fromlist = []
-    elif isinstance(fromlist_node, (ast.List, ast.Tuple)) and all(_string(e) for e in fromlist_node.elts):
+    elif isinstance(fromlist_node, (ast.List, ast.Tuple)) and __all_str(fromlist_node.elts):
         fromlist = list(fromlist_node.elts)
     else:
         # the module is still known, not what the call returns
@@ -173,7 +198,7 @@ def _dunder_import(module_ref: ModuleRef, found: DynamicImport) -> None:
 
     if level:
         # relative to this module's package, which `globals` tells the import system
-        path = _resolve(module_ref, '.' * level + name.value)
+        path = __resolve(module_ref, '.' * level + name.value)
     elif name.value.startswith('.'):
         return  # a relative name needs a level
     else:
@@ -197,7 +222,7 @@ def _dunder_import(module_ref: ModuleRef, found: DynamicImport) -> None:
         found.returned = path.split('.')[0]
 
 
-def _assigned_once(call: ast.Call) -> list[ast.AST]:
+def __assigned_once(call: ast.Call) -> list[ast.Name]:
     """The loads of the name `call` is assigned to, if that's its only assignment."""
 
     stmt = ref(call).parent
@@ -223,13 +248,13 @@ def find(module: ast.Module) -> None:
     module_ref.dynamic_imports = []
 
     for node in ast.walk(module):
-        if not isinstance(node, ast.Call) or (callee := _callee(node)) is None:
+        if not isinstance(node, ast.Call) or (callee := __callee(node)) is None:
             continue
 
         found = DynamicImport(node, callee)
-        (_dunder_import if callee == '__import__' else _import_module)(module_ref, found)
+        (__parse_importlib_import if callee == Callee.IMPORT_MODULE else __parse_dunder_import)(module_ref, found)
         if found.returned is not None:
-            found.roots = [node, *_assigned_once(node)]
+            found.roots = [node, *__assigned_once(node)]
         module_ref.dynamic_imports.append(found)
 
 

@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import fnmatch
+import sys
 
+from alpha93.commons.types import any_object
+
+from terser._pipeline.dynamic_imports import Callee
 from terser.ast import ast, ref
 from terser.ast.ref._node import NodeRef
+
 from .._module_graph import import_bindings, submodule_hops
 from ..resolver import attach
 from ..resolver.binder import alias_target
@@ -59,7 +64,7 @@ def __rename_import_alias(alias: ast.alias, new_dotted: dict[str, str]):
 def __import_root(alias: ast.alias, name: str, dotted: str):
     """Replace `alias` of its `import` statement with `name = __import__(dotted)`."""
 
-    stmt = ref(alias).parent
+    stmt: ast.Import = any_object(ref(alias).parent)
     parent = ref(stmt).parent
     namespace = ref(stmt).namespace
     body = next(value for _, value in ast.iter_fields(parent) if isinstance(value, list) and stmt in value)
@@ -68,9 +73,14 @@ def __import_root(alias: ast.alias, name: str, dotted: str):
     index = stmt.names.index(alias)
     before, after = stmt.names[:index], stmt.names[index + 1:]
 
+    if sys.version_info < (3, 15):
+        call_name = Callee.DUNDER_IMPORT
+    else:
+        call_name = Callee.DUNDER_LAZY_IMPORT if stmt.is_lazy else Callee.DUNDER_IMPORT
+
     assign = ast.Assign(
         targets=[ast.Name(id=name, ctx=ast.Store())],
-        value=ast.Call(func=ast.Name(id='__import__', ctx=ast.Load()), args=[ast.Constant(value=dotted)], keywords=[]),
+        value=ast.Call(func=ast.Name(id=call_name, ctx=ast.Load()), args=[ast.Constant(value=dotted)], keywords=[]),
     )
     replacement: list[ast.stmt] = [assign]
 
@@ -126,7 +136,7 @@ def __rename_submodule_alias(alias: ast.alias, submodule_path: str, new_dotted: 
 def __rename_dynamic_import(found: DynamicImport, new_dotted: dict[str, str]):
     """Rewrite the literals of an `__import__()`/`importlib.import_module()` call naming renamed modules."""
 
-    if found.name is None or found.target is None:
+    if found.path is None or found.name is None or found.target is None:
         return
 
     new_path = __rename_dotted(found.path, new_dotted)
@@ -135,7 +145,8 @@ def __rename_dynamic_import(found: DynamicImport, new_dotted: dict[str, str]):
         tail = found.name.value.lstrip('.')
         count = tail.count('.') + 1 if tail else 0
         new_tail = '.'.join(new_path.split('.')[-count:]) if count else ''
-        found.name.value = '.' * (found.dots if found.callee != '__import__' else 0) + new_tail
+        dots: int = found.dots if found.callee not in (Callee.DUNDER_IMPORT, Callee.DUNDER_LAZY_IMPORT) else 0
+        found.name.value = '.' * dots + new_tail
 
         if found.package is not None:
             found.package.value = __rename_dotted(found.package.value, new_dotted)
@@ -147,10 +158,11 @@ def __rename_dynamic_import(found: DynamicImport, new_dotted: dict[str, str]):
 
 
 def __rename_hops(
-    module_ref: ModuleRef, node: ast.expr, target: ModuleRef, project: dict[str, ModuleRef], new_dotted: dict[str, str],
+    module_ref: ModuleRef, node: ast.AST, target: ModuleRef, project: dict[str, ModuleRef], new_dotted: dict[str, str],
 ):
     """Rename the submodule hops of an attribute chain reading off `target` (`x.a.b.name`)."""
 
+    assert isinstance(node, ast.expr)
     for attr_node, submodule_path in submodule_hops(node, target, project):
         # for `submodule_hops` to follow the chain later on, by the old path
         module_ref.submodule_hops[attr_node] = submodule_path
