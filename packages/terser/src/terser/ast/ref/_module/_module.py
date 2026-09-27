@@ -46,7 +46,7 @@ class ModuleRef(ScopedNode[ast.Module]):
     `resolve_imports` has run (None until then)"""
 
     dynamic_imports: list[DynamicImport]
-    """Every `__import__()`/`importlib.import_module()` call in this module, once
+    """Every `__import__()`/`__lazy_import__()`/`importlib.import_module()` call in this module, once
     `dynamic_imports.find` has run"""
 
     tainted: bool

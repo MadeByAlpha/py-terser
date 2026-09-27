@@ -1,5 +1,5 @@
 """
-Imports made by calling `__import__()` or `importlib.import_module()`.
+Imports made by calling `__import__()`, `__lazy_import__()` (3.15+) or `importlib.import_module()`.
 
 When every argument naming the module is a literal (a `LiteralString`), the call is as static as
 an import statement: `find` resolves the module it imports, `link` ties it to the project, and
@@ -19,7 +19,7 @@ from alpha93.commons.types import any_object
 
 from terser.ast import ast, ref
 
-from .resolver.binding import ImportBinding
+from .resolver.binding import BuiltinBinding, ImportBinding
 
 if __debug__ and __import__("typing").TYPE_CHECKING:
     from collections.abc import Callable
@@ -29,22 +29,31 @@ if __debug__ and __import__("typing").TYPE_CHECKING:
 
 
 class Callee(StrEnum):
+    """What a dynamic import calls, as written in messages."""
+
     DUNDER_IMPORT = "__import__"
     DUNDER_LAZY_IMPORT = "__lazy_import__"
     IMPORT_MODULE = "importlib.import_module"
 
+    @property
+    def is_dunder(self) -> bool:
+        """If it takes `__import__()`'s arguments: `level` and `fromlist`, not `package`."""
+        return self is not Callee.IMPORT_MODULE
+
+
 class DynamicImport:
     """
-    One call to `__import__()` or `importlib.import_module()`.
+    One call to `__import__()`, `__lazy_import__()` or `importlib.import_module()`.
 
     :ivar call: The call
-    :ivar callee: `__import__` or `importlib.import_module`, for messages
+    :ivar callee: What the call calls
     :ivar name: The literal naming the module - None when it's not one, and the import unresolved
     :ivar package: `import_module()`'s literal package, that a relative name is resolved against
-    :ivar dots: How many levels up a relative name starts (`level` for `__import__()`, the leading
-        dots otherwise)
+    :ivar dots: How many levels up a relative name starts (`level` for `__import__()` and
+        `__lazy_import__()`, the leading dots otherwise)
     :ivar path: The dotted path of the module imported, None if unresolved
-    :ivar fromlist: `__import__()`'s literal `fromlist` entries, that may be submodules to import too
+    :ivar fromlist: `__import__()`/`__lazy_import__()`'s literal `fromlist` entries, that may be
+        submodules to import too
     :ivar returned: The dotted path of the module the call evaluates to, None if unknown
     :ivar roots: Nodes evaluating to the returned module: the call, and the loads of a name it's
         assigned to once
@@ -67,7 +76,7 @@ class DynamicImport:
         'target',
     )
 
-    def __init__(self, call: ast.Call, callee: str):
+    def __init__(self, call: ast.Call, callee: Callee):
         self.call = call
         self.callee = callee
         self.name: ast.Str | None = None
@@ -92,27 +101,32 @@ class DynamicImport:
     def location(self) -> str:
         return f"line {self.call.lineno}" if hasattr(self.call, 'lineno') else "somewhere"
 
+
+# `any_object()` only casts here: it replaces a falsy object with `object()`, and a node is never falsy
 __str: Callable[[ast.AST | None], ast.Str | None] = (
-    lambda node: any_object(node if isinstance(node, ast.Constant) and isinstance(node.value, str) else None)
+    lambda node: any_object(node) if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
 )
 
-__all_str: Callable[[list[ast.expr]], TypeGuard[list[ast.Constant]]] = any_object(
+__all_str: Callable[[list[ast.expr]], TypeGuard[list[ast.Str]]] = any_object(
     lambda nodes: all(__str(e) for e in nodes)
 )
 
-__args: Callable[[ast.Call, int, str], ast.AST | None] = lambda call, position, keyword: \
-        call.args[position] if len(call.keywords) > position and call.keywords[position].arg == keyword else None
+__args: Callable[[ast.Call, int, str], ast.AST | None] = lambda call, position, keyword: (
+    call.args[position] if len(call.args) > position
+    else next((kw.value for kw in call.keywords if kw.arg == keyword), None)
+)
 
 
 def __callee(call: ast.Call) -> Callee | None:
-    """`__import__`/`importlib.import_module`, if that's what `call` calls."""
+    """`__import__`/`__lazy_import__`/`importlib.import_module`, if that's what `call` calls."""
 
     func = call.func
 
     if isinstance(func, ast.Name):
         binding = ref(func).binding
-        if callee := Callee._value2member_map_.get(binding):
-            return Callee(callee)
+        # a builtin only where the interpreter running terser has it: `__lazy_import__` from 3.15
+        if isinstance(binding, BuiltinBinding) and binding.name in (Callee.DUNDER_IMPORT, Callee.DUNDER_LAZY_IMPORT):
+            return Callee(binding.name)
 
         # `from importlib import import_module [as y]`
         if (
@@ -187,7 +201,7 @@ def __parse_dunder_import(module_ref: ModuleRef, found: DynamicImport) -> None:
 
     fromlist_node = __args(call, 3, 'fromlist')
 
-    fromlist: list[ast.Constant] | None
+    fromlist: list[ast.Str] | None
     if fromlist_node is None or (isinstance(fromlist_node, ast.Constant) and fromlist_node.value is None):
         fromlist = []
     elif isinstance(fromlist_node, (ast.List, ast.Tuple)) and __all_str(fromlist_node.elts):
@@ -239,9 +253,9 @@ def __assigned_once(call: ast.Call) -> list[ast.Name]:
 
 def find(module: ast.Module) -> None:
     """
-    Record every `__import__()`/`importlib.import_module()` call of `module` in its
-    `ModuleRef.dynamic_imports`. Must run after the module is bound (and its imports resolved), and
-    before literals are hoisted.
+    Record every `__import__()`/`__lazy_import__()`/`importlib.import_module()` call of `module` in
+    its `ModuleRef.dynamic_imports`. Must run after the module is bound (and its imports resolved),
+    and before literals are hoisted.
     """
 
     module_ref = ref(module)
@@ -252,7 +266,7 @@ def find(module: ast.Module) -> None:
             continue
 
         found = DynamicImport(node, callee)
-        (__parse_importlib_import if callee == Callee.IMPORT_MODULE else __parse_dunder_import)(module_ref, found)
+        (__parse_dunder_import if callee.is_dunder else __parse_importlib_import)(module_ref, found)
         if found.returned is not None:
             found.roots = [node, *__assigned_once(node)]
         module_ref.dynamic_imports.append(found)

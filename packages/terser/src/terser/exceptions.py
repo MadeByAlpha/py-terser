@@ -30,6 +30,6 @@ class UnbeneficialMinificationError(Exception):
 
 class DynamicImportWarning(UserWarning):
     """
-    An `__import__()` or `importlib.import_module()` call names its module with something else
-    than literals, so renaming modules or globals and tree-shaking can't follow it.
+    An `__import__()`, `__lazy_import__()` or `importlib.import_module()` call names its module with
+    something else than literals, so renaming modules or globals and tree-shaking can't follow it.
     """

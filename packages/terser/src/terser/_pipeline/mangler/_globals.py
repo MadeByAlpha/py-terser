@@ -92,7 +92,7 @@ def _attribute_links(project: dict[str, ModuleRef]):
                 if link is not None:
                     links.append(link)
 
-        # what `__import__()`/`importlib.import_module()` returns
+        # what `__import__()`/`__lazy_import__()`/`importlib.import_module()` returns
         for found in module_ref.dynamic_imports:
             if found.returns is None:
                 continue

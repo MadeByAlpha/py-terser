@@ -1,3 +1,4 @@
+import builtins
 import io
 import re
 import warnings
@@ -9,6 +10,9 @@ from helpers import read_tree, run_py, write_tree
 
 from alpha93.progression import LogReporter, TqdmReporter
 from terser import TransformConfig, minify_project
+from terser._minify import minify as minify_module
+from terser._pipeline.dynamic_imports import Callee
+from terser.ast import ref
 from terser.exceptions import DynamicImportWarning
 
 PACKAGE = {"pkg/__init__.py": "", **{f"pkg/{name}.py": f'X = "{name}"\n' for name in ("alpha", "beta", "gamma", "delta")}}
@@ -105,6 +109,22 @@ def test_shadowed_callees_are_left_alone(tmp_path, shadowing):
     tree = minify(root, tmp_path / "out", rename_modules=True, preserve_modules={"main"})
     assert "'pkg.alpha'" in tree["main.py"]
     assert run_py("main.py", cwd=tmp_path / "out").stdout == "pkg.alpha\n"
+
+
+@pytest.mark.skipif(not hasattr(builtins, "__lazy_import__"), reason="`__lazy_import__()` is new in 3.15")
+def test_lazy_import_is_followed():
+    # module level only: that's where `__lazy_import__()` works
+    source = (
+        'a = __lazy_import__("pkg.alpha")\n'
+        'b = __lazy_import__("pkg.delta", globals(), None, ("X",), 0)\n'
+        'c = __lazy_import__(a.name)\n'
+    )
+    module, _ = minify_module(source, "pkg.main", TransformConfig(), rename=False, hoist_literals=False)
+
+    a, b, c = ref(module).dynamic_imports
+    assert (a.callee, a.path, a.returned) == (Callee.DUNDER_LAZY_IMPORT, "pkg.alpha", "pkg")
+    assert (b.callee, b.path, b.returned) == (Callee.DUNDER_LAZY_IMPORT, "pkg.delta", "pkg.delta")
+    assert (c.callee, c.name) == (Callee.DUNDER_LAZY_IMPORT, None)
 
 
 NOT_LITERALS = """\

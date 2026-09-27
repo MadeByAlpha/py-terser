@@ -199,7 +199,7 @@ class ProjectMinifier(Pipeline):
         return await self.__dump_results(modules, project, new_dotted)
 
     def __warn_dynamic_imports(self, project: dict[str, ModuleRef], /) -> None:
-        """Warn about the `__import__()`/`importlib.import_module()` calls this run can't follow."""
+        """Warn about the dynamic import calls (`__import__()`, ...) this run can't follow."""
 
         for dotted, module_ref in sorted(project.items()):
             for found in module_ref.dynamic_imports:

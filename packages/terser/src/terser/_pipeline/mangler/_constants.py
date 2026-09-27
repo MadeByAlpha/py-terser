@@ -212,8 +212,8 @@ class HoistLiterals(NodeVisitor):
             return
 
         if node in self._pinned:
-            # names a module in `__import__()`/`importlib.import_module()`: renaming modules
-            # rewrites it there
+            # names a module in `__import__()`/`__lazy_import__()`/`importlib.import_module()`:
+            # renaming modules rewrites it there
             return
 
         self.get_binding(node.s, node).add_reference(node)

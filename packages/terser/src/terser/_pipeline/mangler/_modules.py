@@ -62,7 +62,10 @@ def __rename_import_alias(alias: ast.alias, new_dotted: dict[str, str]):
 
 
 def __import_root(alias: ast.alias, name: str, dotted: str):
-    """Replace `alias` of its `import` statement with `name = __import__(dotted)`."""
+    """
+    Replace `alias` of its `import` statement with `name = __import__(dotted)`, or with
+    `name = __lazy_import__(dotted)` for a `lazy import` (3.15+).
+    """
 
     stmt: ast.Import = any_object(ref(alias).parent)
     parent = ref(stmt).parent
@@ -73,19 +76,21 @@ def __import_root(alias: ast.alias, name: str, dotted: str):
     index = stmt.names.index(alias)
     before, after = stmt.names[:index], stmt.names[index + 1:]
 
-    if sys.version_info < (3, 15):
-        call_name = Callee.DUNDER_IMPORT
-    else:
-        call_name = Callee.DUNDER_LAZY_IMPORT if stmt.is_lazy else Callee.DUNDER_IMPORT
+    # a `lazy import` (3.15+, module level only) stays lazy as `__lazy_import__()` assigned to a global
+    lazy = sys.version_info >= (3, 15) and stmt.is_lazy
+    callee = Callee.DUNDER_LAZY_IMPORT if lazy else Callee.DUNDER_IMPORT
 
     assign = ast.Assign(
         targets=[ast.Name(id=name, ctx=ast.Store())],
-        value=ast.Call(func=ast.Name(id=call_name, ctx=ast.Load()), args=[ast.Constant(value=dotted)], keywords=[]),
+        # `.value`: `compile()` takes an exact `str` for an identifier, not a `StrEnum` member
+        value=ast.Call(func=ast.Name(id=callee.value, ctx=ast.Load()), args=[ast.Constant(value=dotted)], keywords=[]),
     )
     replacement: list[ast.stmt] = [assign]
 
     if after:
         rest = ast.Import(names=after)
+        if sys.version_info >= (3, 15):
+            rest.is_lazy = stmt.is_lazy
         NodeRef.new(rest, parent)
         ref(rest).namespace = namespace
         for other in after:
@@ -134,7 +139,7 @@ def __rename_submodule_alias(alias: ast.alias, submodule_path: str, new_dotted: 
 
 
 def __rename_dynamic_import(found: DynamicImport, new_dotted: dict[str, str]):
-    """Rewrite the literals of an `__import__()`/`importlib.import_module()` call naming renamed modules."""
+    """Rewrite the literals of a dynamic import call naming renamed modules."""
 
     if found.path is None or found.name is None or found.target is None:
         return
@@ -145,8 +150,8 @@ def __rename_dynamic_import(found: DynamicImport, new_dotted: dict[str, str]):
         tail = found.name.value.lstrip('.')
         count = tail.count('.') + 1 if tail else 0
         new_tail = '.'.join(new_path.split('.')[-count:]) if count else ''
-        dots: int = found.dots if found.callee not in (Callee.DUNDER_IMPORT, Callee.DUNDER_LAZY_IMPORT) else 0
-        found.name.value = '.' * dots + new_tail
+        # `__import__()`'s `level` is an argument of its own, `import_module()`'s dots are in the name
+        found.name.value = '.' * (0 if found.callee.is_dunder else found.dots) + new_tail
 
         if found.package is not None:
             found.package.value = __rename_dotted(found.package.value, new_dotted)
