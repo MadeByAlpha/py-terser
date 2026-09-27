@@ -1,10 +1,7 @@
-from functools import partial
 
-import anyio
 import pytest
 
-from helpers import read_tree, run_py, write_tree
-from terser import TransformConfig, minify_project
+from helpers import minify_project, read_tree, run_py, write_tree
 
 APP = {
     "main.py": """\
@@ -58,13 +55,7 @@ def app(tmp_path):
 
 
 def minify(*paths, output=None, config=None, **kwargs):
-    anyio.run(partial(
-        minify_project,
-        config or TransformConfig(),
-        {str(p) for p in paths},
-        output=anyio.Path(output) if output else None,
-        **kwargs,
-    ))
+    minify_project(paths, output, None, config, **kwargs)
 
 
 def total_size(tree: dict[str, str]) -> int:
@@ -201,3 +192,108 @@ def test_pyw_files(tmp_path):
     minify(root, output=out)
     assert set(read_tree(out)) == {"app.pyw", "helper.py"}
     assert run_py("app.pyw", cwd=out).stdout == "42\n"
+
+
+@pytest.mark.parametrize("options", [{"rename_modules": True}, {"entry": {"main"}}])
+def test_relative_submodule_import(tmp_path, options):
+    root = write_tree(tmp_path / "src", {
+        "main.py": "import pkg\nprint(pkg.VALUE)\n",
+        "pkg/__init__.py": "from . import sub\nVALUE = sub.X\n",
+        "pkg/sub.py": "X = 1\n",
+    })
+    out = tmp_path / "out"
+    minify(root, output=out, preserve_modules={"main"}, **options)
+    assert run_py("main.py", cwd=out).stdout == "1\n"
+
+
+def test_entry_keeps_function_level_imports(tmp_path):
+    root = write_tree(tmp_path / "src", {
+        "main.py": "def f():\n    import dep\n    return dep.Y\nprint(f())\n",
+        "dep.py": "Y = 2\n",
+    })
+    out = tmp_path / "out"
+    minify(root, output=out, entry={"main"})
+    assert run_py("main.py", cwd=out).stdout == "2\n"
+
+
+def test_package_name_shadowing_its_submodule(tmp_path):
+    # `from .version import version` imports the submodule, then takes `pkg.version` over
+    root = write_tree(tmp_path / "src", {
+        "main.py": "import pkg\nprint(pkg.version)\n",
+        "pkg/__init__.py": "from .version import version\n",
+        "pkg/version.py": 'version = "1.0"\n',
+    })
+    out = tmp_path / "out"
+    minify(root, output=out, rename_modules=True, preserve_modules={"main"})
+    assert run_py("main.py", cwd=out).stdout == "1.0\n"
+
+
+SEVERAL_IMPORTS = {
+    "main.py": """\
+import pkg.alpha
+import pkg.beta
+from pkg import alpha
+from pkg import alpha
+try:
+    from pkg._speedups import value
+except ImportError:
+    from pkg._native import value
+print(pkg.alpha.X, pkg.beta.X, alpha.X, value())
+""",
+    "pkg/__init__.py": "",
+    "pkg/alpha.py": 'X = "a"\n',
+    "pkg/beta.py": 'X = "b"\n',
+    "pkg/_native.py": "def value():\n    return 1\n",
+}
+
+
+@pytest.mark.parametrize("options", [
+    {"rename_modules": True, "preserve_modules": {"main"}},
+    {"entry": {"main"}},
+    {"rename_globals": True},
+    {"rename_modules": True, "rename_globals": True, "entry": {"main"}},
+])
+def test_name_bound_by_several_imports(tmp_path, options):
+    # every statement binding the name is followed, not only the first
+    root = write_tree(tmp_path / "src", SEVERAL_IMPORTS)
+    out = tmp_path / "out"
+    minify(root, output=out, **options)
+    assert run_py("main.py", cwd=out).stdout == "a b a 1\n"
+
+
+@pytest.mark.parametrize("rename_globals", [False, True])
+def test_renamed_root_package_binds_no_other_name(tmp_path, rename_globals):
+    # `import pkg.alpha` can't become `import A.A`, which binds `A`
+    root = write_tree(tmp_path / "src", {
+        "main.py": "A = 5\nimport pkg.alpha\nprint(A, pkg.alpha.X, len('ab'))\n"
+                   "def f():\n    B = 1\n    import pkg.alpha\n    return B, pkg.alpha.X\nprint(f())\n",
+        "pkg/__init__.py": "",
+        "pkg/alpha.py": 'X = "a"\n',
+    })
+    out = tmp_path / "out"
+    minify(root, output=out, rename_modules=True, preserve_modules={"main"}, rename_globals=rename_globals)
+    assert run_py("main.py", cwd=out).stdout == "5 a 2\n(1, 'a')\n"
+
+
+def test_rename_globals_follows_function_level_imports(tmp_path):
+    root = write_tree(tmp_path / "src", {
+        "main.py": "def f():\n    import pkg.alpha\n    return pkg.alpha.X\nprint(f())\n",
+        "pkg/__init__.py": "",
+        "pkg/alpha.py": 'X = "a"\n',
+    })
+    out = tmp_path / "out"
+    minify(root, output=out, rename_globals=True)
+    assert "X=" not in read_tree(out)["pkg/alpha.py"]
+    assert run_py("main.py", cwd=out).stdout == "a\n"
+
+
+def test_type_checking_imports_are_not_dependencies(tmp_path):
+    root = write_tree(tmp_path / "src", {
+        "main.py": "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    from types_only import Alias\n"
+                   "def f(x: 'Alias'):\n    return x\nprint(f(1))\n",
+        "types_only.py": "Alias = int\n",
+    })
+    out = tmp_path / "out"
+    minify(root, output=out, entry={"main"}, rename_globals=True)
+    assert set(read_tree(out)) == {"main.py"}
+    assert run_py("main.py", cwd=out).stdout == "1\n"

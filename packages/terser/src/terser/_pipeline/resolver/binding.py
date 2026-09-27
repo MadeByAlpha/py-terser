@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, override
 from terser.ast import ast, ref
 from .util import arg_rename_in_place, insert
 
-if TYPE_CHECKING:
+if __debug__ and TYPE_CHECKING:
     from typing import Any
 
     from terser.ast import ModuleRef
@@ -24,6 +24,7 @@ class Binding(ABC):
 
     _name: str | None
     _allow_rename: bool
+    _preserved: bool
     _exported: bool
     _reserved: str | None
     _references: list[ast.AST]
@@ -31,6 +32,7 @@ class Binding(ABC):
     def __init__(self, name: str | None = None, allow_rename: bool = True):
         self._name = name
         self._allow_rename = allow_rename
+        self._preserved = False
         self._exported = False
         self._reserved = None
         self._references = []
@@ -60,6 +62,17 @@ class Binding(ABC):
         Prevent this binding from being renamed
         """
         self._allow_rename = False
+
+    @property
+    def preserved(self) -> bool:
+        """
+        If this binding is named by `preserve_locals`/`preserve_globals`: code outside the module
+        may look it up by name, so it must stay bound even once nothing in the module reads it
+        """
+        return self._preserved
+
+    def mark_preserved(self):
+        self._preserved = True
 
     @property
     def reserved(self) -> str | None:
@@ -414,6 +427,11 @@ class ImportBinding(NameBinding):
     has been bound. Until then (and for imports that resolve outside the project - stdlib,
     third-party), `target` stays None. The path resolved by `resolve_imports` in the meantime is
     tracked separately, in `ModuleRef.import_targets`.
+
+    More than one import statement may bind the name (`import a.b` then `import a.c`, or
+    `try: from ._speedups import f` / `except ImportError: from ._native import f`): each of
+    `aliases` is resolved and linked on its own, into `ModuleRef.import_aliases`, and the binding's
+    own `target`/`target_name` are those of `node`, the first.
     """
 
     target: ModuleRef | None
@@ -430,6 +448,14 @@ class ImportBinding(NameBinding):
     def __repr__(self):
         args = f"self.name={self.source_module}.{self.name}, {self.allow_rename=}, {self.exported=}"
         return self.__class__.__name__ + f"({args}) <references={self.name_references}>"
+
+    @property
+    def aliases(self) -> list[ast.alias]:
+        """The `import` aliases binding this name, `node` first"""
+
+        # a statement put back into the tree by a transform references its aliases once more
+        aliases = {id(node): node for node in (self.node, *self.references) if isinstance(node, ast.alias)}
+        return list(aliases.values())
 
     @property
     def source_module(self) -> str | None:

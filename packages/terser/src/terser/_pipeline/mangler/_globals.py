@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from terser.ast import ast, ref
-from ..resolver.binding import ImportBinding
+from .._module_graph import import_bindings, submodule_hops
+from ..resolver.binder import alias_target
 from ._locals import NameAssigner, add_assigned
 from .util import preserved_names
 
-if TYPE_CHECKING:
+if __debug__ and __import__("typing").TYPE_CHECKING:
     from terser.ast import ModuleRef
 
 
@@ -31,50 +30,43 @@ def _from_import_links(project: dict[str, ModuleRef]):
 
     for module_ref in project.values():
         for binding in module_ref.import_targets:
-            if not isinstance(binding, ImportBinding) or binding.target is None or binding.target_name is None:
-                continue
+            for alias in binding.aliases:
+                linked = alias_target(module_ref, alias)
+                if linked.target is None or linked.target_name is None:
+                    continue
 
-            if not isinstance(binding.node, ast.alias):
-                # `from x import *` upgraded bindings have no single alias node to update -
-                # not tracked here, see the module docstring.
-                continue
+                origin = next((b for b in linked.target.bindings if b.name == linked.target_name), None)
+                if origin is not None:
+                    links.append((alias, origin))
 
-            origin = next((b for b in binding.target.bindings if b.name == binding.target_name), None)
-            if origin is not None:
-                links.append((binding.node, origin))
-
+    # `from x import *` upgraded bindings have no single alias node to update - not tracked here
     return links
 
 
-def _walk_attribute_chain(node: ast.Name, target: ModuleRef, project: dict[str, ModuleRef]):
+def _walk_attribute_chain(node: ast.expr, target: ModuleRef, module_ref: ModuleRef, project: dict[str, ModuleRef]):
     """
     Walk an Attribute chain reading off an imported module (`x.a.b.c`), following submodules
     hop by hop until a hop resolves to an actual name instead of a further submodule (or the
     chain can't be resolved any further within the project).
 
-    :param node: The `ast.Name` node the import binding is referenced by
+    :param node: The node evaluating to `target`: the `ast.Name` an import binding is referenced
+        by, or a dynamic import's root
     :param target: The module the import binding resolves to
+    :param module_ref: The module `node` is in
     :param project: Every module in the project, keyed by dotted module path
     :return: The `(Attribute node, origin binding)` pair for the resolved name, or None
     """
 
-    current = target
-    attr_node = ref(node).parent
+    current, last = target, node
+    for last, submodule_path in submodule_hops(node, target, project, module_ref.submodule_hops):
+        current = project[submodule_path]
 
-    while isinstance(attr_node, ast.Attribute) and attr_node.value is node:
-        attr = attr_node.attr
-        submodule = project.get(f"{current.spec}.{attr}")
+    attr_node = ref(last).parent
+    if not (isinstance(attr_node, ast.Attribute) and attr_node.value is last):
+        return None
 
-        if submodule is not None:
-            current = submodule
-            node = attr_node
-            attr_node = ref(node).parent
-            continue
-
-        origin = next((b for b in current.bindings if b.name == attr), None)
-        return (attr_node, origin) if origin is not None else None
-
-    return None
+    origin = next((b for b in current.bindings if b.name == attr_node.attr), None)
+    return (attr_node, origin) if origin is not None else None
 
 
 def _attribute_links(project: dict[str, ModuleRef]):
@@ -87,15 +79,26 @@ def _attribute_links(project: dict[str, ModuleRef]):
     links = []
 
     for module_ref in project.values():
-        for binding in module_ref.bindings:
-            if not isinstance(binding, ImportBinding) or binding.target is None or binding.target_name is not None:
+        # imports inside functions too
+        for binding in import_bindings(module_ref):
+            if binding.target is None or binding.target_name is not None:
                 continue
 
             for node in binding.references:
                 if not (isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)):
                     continue
 
-                link = _walk_attribute_chain(node, binding.target, project)
+                link = _walk_attribute_chain(node, binding.target, module_ref, project)
+                if link is not None:
+                    links.append(link)
+
+        # what `__import__()`/`__lazy_import__()`/`importlib.import_module()` returns
+        for found in module_ref.dynamic_imports:
+            if found.returns is None:
+                continue
+
+            for root in found.roots:
+                link = _walk_attribute_chain(root, found.returns, module_ref, project)
                 if link is not None:
                     links.append(link)
 

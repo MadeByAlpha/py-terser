@@ -3,9 +3,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from terser.ast import ast, ref
-from ..binding import ImportBinding
 
-if TYPE_CHECKING:
+if __debug__ and __import__("typing").TYPE_CHECKING:
     from terser.ast import ModuleRef
 
 
@@ -49,8 +48,29 @@ def __import_from_target(module_ref: ModuleRef, stmt: ast.ImportFrom, name: str 
     return UnresolvedModuleRef(__target_path(module_ref, package), __target_path(module_ref, submodule))
 
 
-def __binding_target(module_ref: ModuleRef, binding: ImportBinding) -> UnresolvedModuleRef:
-    node = binding.node
+class ImportTarget:
+    """
+    What one `import` alias imports: the path `resolve_imports` resolved, then the module (and name)
+    `linker.link` found it to be in the project. Kept in `ModuleRef.import_aliases`.
+    """
+
+    __slots__ = ('target', 'target_name', 'unresolved')
+
+    def __init__(self, unresolved: UnresolvedModuleRef):
+        self.unresolved = unresolved
+        self.target: ModuleRef | None = None
+        self.target_name: str | None = None
+
+
+def alias_target(module_ref: ModuleRef, alias: ast.alias) -> ImportTarget:
+    """What `alias` imports, resolving it first if it's an alias `resolve_imports` didn't see."""
+
+    if (found := module_ref.import_aliases.get(alias)) is None:
+        found = module_ref.import_aliases[alias] = ImportTarget(__alias_target(module_ref, alias))
+    return found
+
+
+def __alias_target(module_ref: ModuleRef, node: ast.alias) -> UnresolvedModuleRef:
     stmt = ref(node).parent
 
     if isinstance(stmt, ast.ImportFrom):
@@ -58,7 +78,7 @@ def __binding_target(module_ref: ModuleRef, binding: ImportBinding) -> Unresolve
 
     assert isinstance(stmt, ast.Import)
     # A dotted import without asname only binds the root package (see NameBinder.visit_alias)
-    module = node.name if node.asname is not None else binding.name
+    module = node.name if node.asname is not None else node.name.split('.')[0]
     return UnresolvedModuleRef(__target_path(module_ref, module))
 
 
@@ -74,7 +94,9 @@ def resolve_imports(module: ast.Module) -> None:
     module_ref = ref(module)
 
     for binding in module_ref.import_targets:
-        module_ref.import_targets[binding] = __binding_target(module_ref, binding)
+        for alias in binding.aliases:
+            alias_target(module_ref, alias)
+        module_ref.import_targets[binding] = alias_target(module_ref, binding.node).unresolved
 
     for stmt in module_ref.wildcard_targets:
         module_ref.wildcard_targets[stmt] = __import_from_target(module_ref, stmt, None)

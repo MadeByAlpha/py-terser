@@ -25,13 +25,13 @@
     - constant operations
     - boolean operations (`x ==/is True` → `x`, `x ==/is False` → `not x`, …)
         - `__debug__`
-        - `typing.TYPE_CHECKING` `(typing)`
+        - `typing.TYPE_CHECKING` `fold_type_checking.py` `(Flags.REQUIRES_IMPORT_RESOLVE)`
         - `sys.version_info`, `sys.platform` `(module-sensitive)`
         - numbers (`0b1` → `1`, `1_000_000` → `1e6`, `0.0001` → `1e-4`)
     - strings (`\uXXXX` → raw represents, `f"{x}"` → `str(x)` or `x`, `f"{x}{y}"` → `x + y`)
     - collections ( `list()` → `[]`, `dict()` → `{}`, `tuple()` → `()`, `set([1])` → `{1,}` )
 - Convert `typing_extensions` `(Flags.REQUIRES_IMPORT_RESOLVE)`
-- Remove dead blocks
+- Remove dead blocks `remove_dead_code.py` `(Flags.REQUIRES_IMPORT_RESOLVE)`
 - Convert early exists
 - Convert to inline
     - `if cond: func(x)` → `cond and func(x)`

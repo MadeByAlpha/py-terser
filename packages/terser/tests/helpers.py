@@ -3,14 +3,19 @@ import dataclasses
 import os
 import subprocess
 import sys
+import threading
+from functools import partial
 from pathlib import Path
 
+import anyio
+
 import terser
+from alpha93.progression import Reporter, Stage
 from terser._minify import unparse
 from terser._pipeline import parser, resolver
 from terser.ast import CompareError, compare_ast
 from terser.ast.ref._module._spec import SingleFileModuleSpec
-from terser.config import TransformConfig
+from terser.config import Config, TransformConfig
 from terser.exceptions import UnbeneficialMinificationError
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -76,6 +81,22 @@ def minify_src(source: str, config: TransformConfig | None = None, path: str = "
         return source
 
 
+def minify_project(paths, output=None, reporter=None, config: TransformConfig | None = None, /, **options):
+    """`terser.minify_project` over `paths` (a path or several), with `options` as the rest of its `Config`."""
+
+    paths = [paths] if isinstance(paths, (str, os.PathLike)) else paths
+    return anyio.run(partial(
+        terser.minify_project,
+        {str(path) for path in paths},
+        Config(
+            output_path=anyio.Path(output) if output else None,
+            transform=config or TransformConfig(),
+            **options,
+        ),
+        reporter,
+    ))
+
+
 def run_py(*args: str | os.PathLike, cwd: str | os.PathLike | None = None, stdin: str | None = None,
            env: dict[str, str] | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
     """Run the current interpreter in a subprocess."""
@@ -121,3 +142,60 @@ def read_tree(root: Path) -> dict[str, str]:
         for path in sorted(root.rglob("*"))
         if path.is_file() and "__pycache__" not in path.parts
     }
+
+
+class RecordingReporter(Reporter):
+    """Records every stage it is given, and how far each got."""
+
+    def __init__(self):
+        self.stages = []
+
+    def stage(self, name, total=None, /):
+        stage = RecordingStage(name, total)
+        self.stages.append(stage)
+        return stage
+
+
+class RecordingStage(Stage):
+    def __init__(self, name, total):
+        super().__init__(name, total)
+        self.done = 0
+        self.completed = None
+        self.__lock = threading.Lock()
+
+    def advance(self, n=1, /):
+        with self.__lock:
+            self.done += n
+
+    def _close(self, completed, /):
+        self.completed = completed
+
+
+# like anyio's: deletes `TYPE_CHECKING` from the package's globals, and reads the imports under
+# `if TYPE_CHECKING or ...` back from its source
+LAZY_PACKAGE = {
+    "pkg/__init__.py": """\
+from typing import TYPE_CHECKING
+from ._lazy import install
+if TYPE_CHECKING or not install():
+    from os import path
+""",
+    "pkg/_lazy.py": """\
+import ast
+import inspect
+import sys
+
+
+def install():
+    module_globals = sys._getframe(1).f_globals
+    del module_globals["TYPE_CHECKING"]
+    source = inspect.getsource(sys.modules[module_globals["__name__"]])
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.If) and isinstance(node.test, ast.BoolOp):
+            first = node.test.values[0]
+            if isinstance(first, ast.Name) and first.id == "TYPE_CHECKING":
+                module_globals["LAZY"] = True
+                return True
+    return False
+""",
+}

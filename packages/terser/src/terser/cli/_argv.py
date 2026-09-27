@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from terser.config import TransformConfig, RemoveAnnotationOptions
 from ._argparse import MutuallyExclusive
 
-if TYPE_CHECKING:
+if __debug__ and TYPE_CHECKING:
     from argparse import Namespace
 
 
@@ -23,14 +23,16 @@ def parse_preserve(args: set[str]) -> dict[str, list[str]]:
 
     Each argument is either "name[,name...]" (applies to every module, pattern "*") or
     "pattern:name[,name...]" (applies only to modules whose dotted path, or filename in
-    single-file mode, matches the glob pattern), e.g. "foo.bar:baz,qux".
+    single-file mode, matches the glob pattern), e.g. "foo.bar:baz,qux". The pattern may go on
+    with "::" and a glob over qualnames, e.g. "foo.bar::Model.*:baz".
     """
 
     result: dict[str, list[str]] = {}
     for arg in args:
-        pattern, sep, names = arg.partition(':')
+        # the last `:` ends the pattern, which may itself hold a `::` (`module::qualname`)
+        pattern, sep, names = arg.rpartition(':')
         if not sep:
-            pattern, names = '*', pattern
+            pattern = '*'
         pattern = pattern.strip() or '*'
 
         for name in names.split(','):
@@ -61,8 +63,13 @@ class ManglingOptions(BaseModel):
     """Mangle local (including nonlocal) names"""
 
     preserve_locals: Annotated[set[str], Field(default_factory=set)]
-    """Comma-separated list of local names that will not be mangled. Prefix with a
-    glob pattern and ':' to scope to matching modules, e.g. 'foo.bar:baz,qux'"""
+    """Comma-separated list of local names that will not be mangled; '*'/'**' stand for
+    *args/**kwargs parameters ('*name'/'**name' for those named so). Prefix with a glob
+    pattern and ':' to scope to matching modules, e.g. 'foo.bar:baz,qux', or with
+    'module::qualname:' to scope to matching functions and classes, e.g. 'pkg.mod::Field:**'"""
+
+    rename_star_args: bool = True
+    """Mangle the names of *args/**kwargs parameters, which show in inspect.signature()"""
 
     rename_globals: bool = False
     """Mangle global (module-level) names. In project mode, references from other modules follow the rename"""
@@ -101,6 +108,11 @@ class TerserArguments(BaseModel):
     workers: int | None = None
     """Number of worker threads to process modules with in project mode. Defaults to the
     interpreter's default thread pool sizing."""
+
+    preserve_type_checking: Annotated[set[str], Field(default_factory=set)]
+    """Glob patterns matched against a module's dotted path (or filename, in single-file mode) -
+    matching modules keep `TYPE_CHECKING` and the code it guards as they are, for code reading
+    it back from the source (e.g. anyio's lazy importer)"""
 
     entry: Annotated[set[str], Field(default_factory=set)]
     """Entry point modules (dotted module path or file path). Requires a directory, multiple
@@ -143,5 +155,5 @@ class TerserParsedArguments(TerserArguments):
             output_options=output_options,
             transform_options=transform_options,
             mangling_options=mangling_options,
-            **_given(namespace, ("preserve_shebang", "prefer_single_line", "workers", "entry")),
+            **_given(namespace, ("preserve_shebang", "prefer_single_line", "workers", "preserve_type_checking", "entry")),
         )

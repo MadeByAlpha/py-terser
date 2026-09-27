@@ -10,13 +10,13 @@ from typing import TYPE_CHECKING, Any, Annotated, get_args, get_origin, override
 from alpha93.commons.pydantic import dataclasses
 from pydantic import BaseModel
 
-if TYPE_CHECKING:
+if __debug__ and TYPE_CHECKING:
     from pydantic.fields import FieldInfo
 
     type ArgParse = argparse._ActionsContainer
 
 
-if TYPE_CHECKING:
+if __debug__ and TYPE_CHECKING:
     type MutuallyExclusive[T] = Annotated[T, ...]
 else:
     class MutuallyExclusive:

@@ -9,7 +9,7 @@ from alpha93.commons import typed
 
 from terser.ast import ast, ref, is_scoped
 
-if TYPE_CHECKING:
+if __debug__ and __import__("typing").TYPE_CHECKING:
     from terser.ast.ref import Comprehension, ContainsScope, Invokable
 
 

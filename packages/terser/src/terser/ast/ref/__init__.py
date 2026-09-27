@@ -1,11 +1,11 @@
 from typing import TYPE_CHECKING
 
 from ._scoped import SCOPED_T, ScopedNode, is_scoped
-from ._node import ref
+from ._node import ref, ref_or_none
 from ._module import DummySpec, ModuleSpec, ModuleRef, _spec as spec
 
 
-if TYPE_CHECKING:
+if __debug__ and __import__("typing").TYPE_CHECKING:
     from ._node import Comprehension, Invokable, ContainsScope
 
 
@@ -18,6 +18,7 @@ __all__ = (
     "spec",
     "is_scoped",
     "ref",
+    "ref_or_none",
 
     "Comprehension",
     "Invokable",

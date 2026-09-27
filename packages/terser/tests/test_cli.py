@@ -132,8 +132,11 @@ def test_error_in_project(tmp_path):
     project = write_tree(tmp_path / "project", {"good.py": "x = 1\n", "bad.py": "def f(:\n"})
     result = run_terser(project, "--output", tmp_path / "out", check=False)
     assert result.returncode == 1
-    # the worker's error itself, not an exception group, and no noise from progress bars at shutdown
-    assert result.stderr.rstrip().endswith("SyntaxError: invalid syntax")
+    # the worker's error, then the stage it failed in, not an exception group, and no noise from
+    # progress bars at shutdown
+    assert result.stderr.rstrip().endswith("RuntimeError: Compiling modules failed")
+    assert "SyntaxError: invalid syntax" in result.stderr
+    assert "RuntimeError: Compiling modules failed while processing bad" in result.stderr
     assert "bad.py" in result.stderr
     assert "Exception Group" not in result.stderr
     assert "Exception ignored" not in result.stderr
@@ -165,6 +168,8 @@ def test_output_and_in_place_are_exclusive(example, tmp_path):
     (["pkg.*:a", "b"], {"pkg.*": ["a"], "*": ["b"]}),
     ([" pkg : a , b "], {"pkg": ["a", "b"]}),
     ([":a"], {"*": ["a"]}),
+    (["pkg.mod::Field:**,*args"], {"pkg.mod::Field": ["**", "*args"]}),
+    (["*::Model.*:a"], {"*::Model.*": ["a"]}),
 ])
 def test_parse_preserve(args, expected):
     from terser.cli._argv import parse_preserve
@@ -198,6 +203,8 @@ def test_every_transform_option_is_forwarded():
         "--remove-explicit-base", "False",
         "--remove-explicit-return-none", "False",
         "--fold-constants", "False",
+        "--fold-type-checking", "False",
+        "--remove-dead-code", "False",
         "--remove-debug", "False",
         "--remove-asserts", "False",
         "--convert-pass", "False",
@@ -215,6 +222,8 @@ def test_every_transform_option_is_forwarded():
         remove_explicit_base=False,
         remove_explicit_return_none=False,
         fold_constants=False,
+        fold_type_checking=False,
+        remove_dead_code=False,
         remove_debug=False,
         remove_asserts=False,
         convert_pass=False,
@@ -267,6 +276,25 @@ def test_mangling_options():
     assert options.preserve_modules == {"pkg.*"}
 
 
+def test_preserve_type_checking_option():
+    assert _argv("--preserve-type-checking", "pkg", "anyio.*").preserve_type_checking == {"pkg", "anyio.*"}
+    assert _argv().preserve_type_checking == set()
+
+
+TYPE_CHECKING_SOURCE = """\
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    import os
+print(1)
+"""
+
+
+@pytest.mark.parametrize(("pattern", "kept"), [("*lazy.py", True), ("*other.py", False)])
+def test_preserve_type_checking_single_file(tmp_path, pattern, kept):
+    source = write_tree(tmp_path, {"lazy.py": TYPE_CHECKING_SOURCE}) / "lazy.py"
+    assert ("TYPE_CHECKING" in run_terser(source, "--preserve-type-checking", pattern).stdout) is kept
+
+
 def test_help_mentions_every_option():
     help_text = run_terser("--help").stdout
     for field in dataclasses.fields(TransformConfig):
@@ -278,3 +306,34 @@ def test_output_parses(project, tmp_path):
     run_terser(project, "--output", output)
     for source in read_tree(output).values():
         ast.parse(source)
+
+
+SIGNATURE = """\
+import inspect
+
+
+def Field(default=None, *, alias=None, **extra):
+    return default, alias, extra
+
+
+names = set(inspect.signature(Field).parameters)
+names.remove("extra")
+print(sorted(names))
+"""
+
+
+@pytest.mark.parametrize("args", [
+    ["--rename-star-args", "false"],
+    ["--preserve-locals", "**extra"],
+    ["--preserve-locals", "*::Field:**"],
+])
+def test_star_args_kept_for_inspect(tmp_path, args):
+    source = write_tree(tmp_path, {"sig.py": SIGNATURE}) / "sig.py"
+    minified = run_terser(source, *args).stdout
+    assert "**extra" in minified
+    assert run_py("-c", minified).stdout == "['alias', 'default']\n"
+
+
+def test_star_args_renamed_by_default(tmp_path):
+    source = write_tree(tmp_path, {"sig.py": SIGNATURE}) / "sig.py"
+    assert "**extra" not in run_terser(source).stdout

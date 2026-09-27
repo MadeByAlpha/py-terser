@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 from terser.ast import ast, is_constant_node, ref
 
-if TYPE_CHECKING:
+if __debug__ and __import__("typing").TYPE_CHECKING:
     from typing import TypeIs
 
 

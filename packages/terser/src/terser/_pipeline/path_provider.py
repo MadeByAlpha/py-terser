@@ -7,7 +7,7 @@ from anyio import Path
 
 from terser.ast.ref import spec
 
-if TYPE_CHECKING:
+if __debug__ and TYPE_CHECKING:
     from collections.abc import Iterator
     from typing import Final
 
@@ -308,7 +308,7 @@ class PathProvider(MutableSet[str]):
 
     @override
     def __iter__(self):
-        pass
+        return iter(self.__iter)
 
     def iter(self, /) -> Iterator[spec.ModuleSpec]:
         assert self.is_resolved, "Path provider is not resolved yet"

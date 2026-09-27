@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from . import ast
 
-if TYPE_CHECKING:
+if __debug__ and __import__("typing").TYPE_CHECKING:
     from typing import TypeIs
 
 

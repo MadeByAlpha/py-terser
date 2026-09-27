@@ -24,12 +24,12 @@ py-terser currently supports Python 3.13 to Python 3.14.
 pip install py-terser
 ```
 
-The command-line interface additionally requires `pydantic` and `tqdm`:
+The command-line interface additionally requires `pydantic`:
 
 ```shell
-pip install py-terser pydantic tqdm
+pip install py-terser pydantic
 # or, as a standalone tool
-uv tool install py-terser --with pydantic --with tqdm
+uv tool install py-terser --with pydantic
 ```
 
 To work on py-terser itself:
@@ -93,7 +93,7 @@ terser src/ --output build/ --entry app.main
 
 Boolean options can be given alone (`--rename-globals`) or with a value (`--rename-locals False`; `yes`/`no` and
 `1`/`0` also work). Options that accept several values
-(`--preserve-locals`, `--preserve-globals`, `--preserve-modules`, `--entry`, `--contracts`) can be given
+(`--preserve-locals`, `--preserve-globals`, `--preserve-modules`, `--preserve-type-checking`, `--entry`, `--contracts`) can be given
 multiple values, and can be repeated.
 
 #### General
@@ -106,6 +106,7 @@ multiple values, and can be repeated.
 | `--prefer-single-line` | `False` | Join statements with `;` instead of newlines, even when it saves no bytes     |
 | `--workers N`          | auto    | Number of worker threads in project mode                                       |
 | `--entry MODULE`       | —       | Entry point modules (dotted module path or file path), project mode only. See [Tree-shaking](#tree-shaking) |
+| `--preserve-type-checking PATTERN` | — | Glob patterns over dotted module paths (filenames in single-file mode); matching modules keep `TYPE_CHECKING` and the code it guards. See [Keeping `TYPE_CHECKING`](#keeping-type_checking) |
 
 #### Transforms
 
@@ -124,7 +125,9 @@ multiple values, and can be repeated.
 | `--remove-attribute-annotations` | `False` | Remove class attribute annotations                                            |
 | `--remove-explicit-base`         | `True`  | Remove explicit base classes (e.g. `class A(object)`)                         |
 | `--remove-explicit-return-none`  | `True`  | Replace `return None` with `return`                                           |
-| `--fold-constants`               | `True`  | Evaluate constant expressions and shrink literals                             |
+| `--fold-constants`               | `True`  | Evaluate constant expressions and shrink literals, and decide `and`/`or`/`x if c else y` by their constant operands (`False and x` → `False`) |
+| `--fold-type-checking`           | `True`  | Replace `typing.TYPE_CHECKING` (also `typing_extensions`') with `False`, its value at run time, removing the import when nothing else uses it |
+| `--remove-dead-code`             | `True`  | Remove the branches of `if`/`while` whose condition is constant (`if False:`, `if TYPE_CHECKING:`), unless that changes how the function compiles (`if False: yield`, a `global`, or the only assignment of a local) |
 | `--remove-debug`                 | `True`  | Remove `if __debug__:` blocks                                                 |
 | `--remove-asserts`               | `True`  | Remove `assert` statements                                                    |
 | `--convert-pass`                 | `True`  | Remove `pass`, or replace it with the shortest literal statement (`0`)        |
@@ -138,6 +141,7 @@ multiple values, and can be repeated.
 | `--hoist-literals`           | `True`  | Replace frequently used literals with short-named variables                   |
 | `--rename-locals`            | `True`  | Rename local (including nonlocal) names                                        |
 | `--preserve-locals NAMES`    | —       | Local names that are not renamed. See [Preserving names](#preserving-names)   |
+| `--rename-star-args`         | `True`  | Rename `*args`/`**kwargs` parameters, whose names show in `inspect.signature()` |
 | `--rename-globals`           | `False` | Rename module-level names. In project mode, importers in other modules follow |
 | `--preserve-globals NAMES`   | —       | Global names that are not renamed                                              |
 | `--rename-modules`           | `False` | Rename module/package files and directories. Project mode only, requires `--output` |
@@ -156,10 +160,53 @@ terser src/ --output build/ --rename-globals --preserve-globals config,logger
 terser src/ --output build/ --rename-globals --preserve-globals 'app.api.*:handler'
 ```
 
+`--preserve-locals` is more specific still:
+
+- `*` and `**` stand for a function's `*args` and `**kwargs` parameters, whatever their names; `*name` and `**name`
+  for them only when they have that name. Other locals of the same names are still renamed.
+- The module pattern may go on with `::` and a glob over the `__qualname__` of the function or class the name is bound
+  in (`Field`, `Model.__init__`, `outer.<locals>.inner`). A list, set or dict comprehension counts as part of the
+  function it is in.
+
+```shell
+# pydantic reads `**extra` of `Field` back through `inspect.signature()`
+terser src/ --output build/ --preserve-locals 'pydantic.fields::Field:**'
+
+# Keep the names of every `*args`/`**kwargs` parameter
+terser src/ --output build/ --rename-star-args false
+```
+
+In the hatch build hook, the same goes in the keys of the tables: `preserve_locals = { "pydantic.fields::Field" =
+["**"] }`.
+
+### Keeping `TYPE_CHECKING`
+
+Some code reads `TYPE_CHECKING` back at run time: anyio's lazy importer deletes it from its packages' globals, and
+parses their source for the imports under `if TYPE_CHECKING or ...`. `--fold-type-checking` would fold that block
+away, so leave it as is in the modules matching `--preserve-type-checking`:
+
+```shell
+terser src/ --output build/ --preserve-type-checking 'anyio' 'anyio.*'
+```
+
 ### Tree-shaking
 
 When `--entry` is given, modules that are not reachable (through imports) from any entry module are dropped from the
 output. Entry modules are never renamed by `--rename-modules`.
+
+Both follow imports statically. `__import__()` and `importlib.import_module()` count as imports when the module is
+named by literals (a relative name too, against a literal package or `__package__`): tree-shaking keeps what they
+import, renaming rewrites the literals, and the attributes of the module they return follow renamed submodules and
+globals, used right away or through a name assigned once:
+
+```python
+settings = importlib.import_module("app.settings")   # followed
+handler = importlib.import_module(f"app.handlers.{name}")   # not followed: a warning
+```
+
+A module named otherwise, only known at run time (or looked up in `sys.modules`), is neither kept by tree-shaking nor
+followed when renamed: keep it with `--entry` and `--preserve-modules` (and its globals with `--preserve-globals`).
+With `--rename-modules`, `--rename-globals` or `--entry`, each such call is reported as a `DynamicImportWarning`.
 
 ```shell
 terser src/ --output build/ --entry app.main app.cli --rename-modules
@@ -191,9 +238,25 @@ remove_annotations = true
 
 Supported keys:
 
-- Top level: `hoist_literals`, `rename_locals`, `preserve_locals`, `rename_globals`, `preserve_globals`
+- Top level: `hoist_literals`, `rename_locals`, `preserve_locals`, `rename_star_args`, `rename_globals`,
+  `preserve_globals`, `workers`, `rename_modules`, `preserve_modules`, `preserve_type_checking` and `entry`, the same
+  as the command-line options:
+  - `workers`: the most threads to minify with (and so to create); a positive integer.
+  - `rename_modules`: renamed modules and packages are renamed in the wheel too, and a renamed package takes its other
+    files (data files, stubs, extension modules) along. Modules the project's scripts and entry points refer to keep
+    their names.
+  - `entry`: dotted module paths, or paths of module files relative to the project root. Modules unreachable from
+    them are left out of the wheel. The modules the scripts and entry points refer to count as entries too. An entry
+    that is not a module of the build is an error.
 - `config` table: every `TransformConfig` field (see [Python API](#python-api)). `remove_annotations` also takes a
   table of the four `remove_*_annotations` options.
+
+The hook shows its progress on stderr; `hatch build -q` (or `HATCH_QUIET=1`) turns it off. On a terminal, the top bar
+shows the whole build (every stage counted alike), the one below the current stage, and the line below them the modules
+being compiled or written; elsewhere, each stage leaves one line when done. Progress bars need `tqdm` and `rich`; when
+the build environment lacks them, the hook lists the stages as they start
+after a warning, or, in CI (the `CI` environment variable is set), reports each stage's progress every tenth as plain
+lines.
 
 ## Python API
 
@@ -222,7 +285,9 @@ anyio.run(
 
 `TransformConfig` has the same fields as the transform options above (`remove_annotations` also accepts a
 `RemoveAnnotationOptions` instead of a `bool`). `minify_project` accepts the mangling options as keyword arguments,
-plus `workers`, `rename_modules`, `preserve_modules` and `entry`.
+plus `workers`, `rename_modules`, `preserve_modules`, `preserve_type_checking` and `entry`. `minify_project()` returns
+where each module and extension module went: its source path to its output path, or to `None` when tree-shaking
+dropped it. `minify()` takes `preserve_type_checking` as a `bool`, for its one module.
 
 ## Contracts
 

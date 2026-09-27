@@ -3,43 +3,48 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from terser.ast import ast, ref
+from . import dynamic_imports
+from .resolver.binder import alias_target
 from .resolver.binding import ImportBinding
 
-if TYPE_CHECKING:
+if __debug__ and __import__("typing").TYPE_CHECKING:
     from terser.ast import ModuleRef
-    from .resolver.binder import UnresolvedModuleRef
+    from .resolver.binder import ImportTarget, UnresolvedModuleRef
 
 
-def _link_alias(
-    binding: ImportBinding,
-    unresolved: UnresolvedModuleRef,
-    project: dict[str, ModuleRef]
-) -> None:
+def _link_alias(linked: ImportTarget, alias: ast.alias, binding: ImportBinding, project: dict[str, ModuleRef]) -> None:
+    """Find what one of the aliases binding `binding` imports, in the project."""
+
+    unresolved = linked.unresolved
     package_target = project.get(unresolved.path) if unresolved.path is not None else None
 
     if unresolved.submodule_path is None:
         # plain `import x[.y]` - unambiguous, the binding always refers to the module itself
-        binding.target = package_target
+        linked.target = package_target
         return
 
-    name = binding.node.name  # the imported attribute/submodule name
-    if package_target is not None and any(binding.name == name for binding in package_target.bindings):
-        binding.target = package_target
-        binding.target_name = name
+    name = alias.name  # the imported attribute/submodule name
+    # `from . import y` in x's own `__init__` binds y there itself: x has no y of its own yet, so
+    # the import reaches for the submodule
+    if package_target is not None and any(
+        other.name == name and other is not binding for other in package_target.bindings
+    ):
+        linked.target = package_target
+        linked.target_name = name
         return
 
     submodule_target = project.get(unresolved.submodule_path) if unresolved.submodule_path is not None else None
     if submodule_target is not None:
-        binding.target = submodule_target
+        linked.target = submodule_target
         return
 
     if package_target is not None:
         # x resolves within the project, but y is neither a binding nor a submodule of it,
         # e.g. provided dynamically through x's __getattr__ (PEP 562)
-        binding.target = package_target
+        linked.target = package_target
         binding.disallow_rename()
 
-    # else: x itself is stdlib / third-party - leave binding.target as None
+    # else: x itself is stdlib / third-party - leave the target None
 
 
 def _link_wildcard(
@@ -86,8 +91,14 @@ def link(module: ast.Module, project: dict[str, ModuleRef]) -> None:
 
     module_ref = ref(module)
 
-    for binding, unresolved in module_ref.import_targets.items():
-        _link_alias(binding, unresolved, project)
+    for binding in module_ref.import_targets:
+        for alias in binding.aliases:
+            _link_alias(alias_target(module_ref, alias), alias, binding, project)
+
+        linked = alias_target(module_ref, binding.node)
+        binding.target, binding.target_name = linked.target, linked.target_name
 
     for stmt, unresolved in module_ref.wildcard_targets.items():
         _link_wildcard(module_ref, stmt, unresolved, project)
+
+    dynamic_imports.link(module_ref, project)

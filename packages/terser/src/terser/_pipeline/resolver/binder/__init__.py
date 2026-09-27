@@ -4,10 +4,10 @@ from typing import TYPE_CHECKING
 
 from ._all import resolve_all as __resolve__all__
 from ._mark_exports import mark_exports as __mark_exports
-from ._resolve_imports import UnresolvedModuleRef, resolve_imports as __resolve_imports
+from ._resolve_imports import ImportTarget, UnresolvedModuleRef, alias_target, resolve_imports as __resolve_imports
 from ._bind import bind as __bind
 
-if TYPE_CHECKING:
+if __debug__ and __import__("typing").TYPE_CHECKING:
     from ast import Module
 
 
@@ -18,4 +18,4 @@ def bind(module: Module):
     __bind(module)
 
 
-__all__ = ("UnresolvedModuleRef", "bind",)
+__all__ = ("ImportTarget", "UnresolvedModuleRef", "alias_target", "bind",)

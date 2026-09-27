@@ -1,32 +1,34 @@
 from __future__ import annotations
 
+import fnmatch
 import os
 import shutil
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING, override
 
 import anyio
-from anyio import AsyncFile, CapacityLimiter, Path, to_thread
+from alpha93.commons.types import typed
+from anyio import CapacityLimiter, Path, to_thread
 
-from alpha93.progression import HeadlessReporter
+from alpha93.progression import NullReporter
 
 from ._minify import minify, unparse
 from ._pipeline import PathProvider, Pipeline, linker, mangler, transforms, tree_shake
-from ._pipeline.mangler.util import preserved_names
+from ._pipeline.mangler.util import STAR_ARGS, preserved_names
+from ._pipeline.pipeline import PipelineContext, PipelineStep
 from .ast import ref
 from .ast.ref import spec as _spec
+from .config import Config
+from .exceptions import DynamicImportWarning
 
-if TYPE_CHECKING:
+if __debug__ and TYPE_CHECKING:
     import ast
-    from collections.abc import Callable, Coroutine
+    from collections.abc import Callable, Collection
     from typing import Any
 
-    from alpha93.progression import BaseReporter, Task
+    from alpha93.progression import Reporter, Stage
     from terser.ast.ref import ModuleRef, ModuleSpec
-
-    from .config import TransformConfig
-
-    type Awaitable[T] = Coroutine[Any, Any, T]
 
 
 @asynccontextmanager
@@ -36,31 +38,25 @@ async def _task_group():
     try:
         async with anyio.create_task_group() as tg:
             yield tg
+    except KeyboardInterrupt:
+        tg.cancel()
+        raise
     except BaseExceptionGroup as group:
         if len(group.exceptions) == 1:
             raise group.exceptions[0] from None
         raise
 
 
-async def _read_async(path: Path, /, *, limiter: CapacityLimiter) -> str:
-    # noinspection bad-argument-type
-    source_fp = await to_thread.run_sync(path._path.open, 'r', limiter=limiter)
-    source_io = AsyncFile(source_fp, limiter=limiter)
-    try:
-        # noinspection bad-return
-        return await source_io.read()
-    finally:
-        await source_io.aclose()
+def _read(path: os.PathLike[str], /) -> str:
+    with open(path) as fp:
+        return fp.read()
 
-async def _write_async(path: Path, source: str, /, *, limiter: CapacityLimiter):
-    # noinspection bad-argument-type
-    source_fp = await to_thread.run_sync(path._path.open, 'w', limiter=limiter)
-    source_io = AsyncFile(source_fp, limiter=limiter)
-    try:
-        # noinspection bad-argument-type
-        await source_io.write(source)
-    finally:
-        await source_io.aclose()
+
+def _write(path: os.PathLike[str], source: str, /) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w') as fp:
+        fp.write(source)
+
 
 def _module_output_path(spec: _spec.ModuleSpec, new_dotted: dict[str, str], strip: int = 0) -> Path:
     """
@@ -75,185 +71,171 @@ def _module_output_path(spec: _spec.ModuleSpec, new_dotted: dict[str, str], stri
     return Path(*parts[:-1], parts[-1] + spec.path.suffix)
 
 
-class ProjectMinifier(Pipeline):
-    def __init__(
-        self,
-        path_provider: PathProvider,
-        config: TransformConfig,
-        /,
-        reporter: BaseReporter,
-        output: Path | None = None,
-        workers: int | None = None,
-        *,
-        rename_locals: bool = True,
-        preserve_locals: dict[str, list[str]] | None = None,
-        rename_globals: bool = False,
-        preserve_globals: dict[str, list[str]] | None = None,
-        hoist_literals: bool = True,
-        prefer_single_line: bool = True,
-        rename_modules: bool = False,
-        preserve_modules: set[str] | None = None,
-        entry: set[str] | None = None,
-    ):
-        assert path_provider.is_resolved, "paths are not resolved yet"
-        assert not (rename_modules and output is None), \
-            "rename_modules requires a separate output directory - it would otherwise leave the renamed file's old copy behind"
+@dataclass(frozen=True)
+class _FinalContext(PipelineContext):
+    config: Config
+    reporter: Reporter
+    limiter: CapacityLimiter
 
-        self.__config = config
-        self.__output = output
+    module_specs: list[_spec.ModuleSpec]
+    ffi_specs: list[_spec.FfiModuleSpec]
+    output_package: str | None = None
 
-        self.__pp = path_provider
-        # FFI binaries have no source to parse - they only occupy a namespace slot, so keep them apart
-        self.__module_specs = [s for s in path_provider.iter() if not isinstance(s, _spec.FfiModuleSpec)]
-        self.__ffi_specs = [s for s in path_provider.iter() if isinstance(s, _spec.FfiModuleSpec)]
-        self.__reporter = reporter
-        self.__limiter = CapacityLimiter(total_tokens=workers or int(
-                (getattr(os, "process_cpu_count", os.cpu_count)() or 1) * 1.6
-        ))
 
-        self.rename_locals = rename_locals
-        self.preserve_locals = preserve_locals or {}
-        self.rename_globals = rename_globals
-        self.preserve_globals = preserve_globals or {}
-        self.hoist_literals = hoist_literals
-        self.prefer_single_line = prefer_single_line
-        self.rename_modules = rename_modules
-        self.preserve_modules = preserve_modules or set()
+@dataclass()
+class _Context(PipelineContext):
+    frozen: _FinalContext
+
+    entry: set[str]
+    project: dict[str, ModuleRef]
+    modules: list[ast.Module]
+    modules_len: int
+    new_dotted: dict[str, str] = field(default_factory=dict)
+    outputs: dict[str, str | None] = field(default_factory=dict)
+
+
+class ProjectMinifier(Pipeline[_Context]):
+    # how many stages `minify()` reports
+    STAGES = 7
+
+    def __init__(self, paths: PathProvider, config: Config, reporter: Reporter, /):
+        assert paths.is_resolved, "paths are not resolved yet"
 
         # when a single package directory is given, the output directory stands for that package:
         # its contents are written straight into it, and the package can't be renamed (since its
         # directory's name is up to the caller)
-        self.__output_package = path_provider.single_package_root
-        if self.__output_package is not None:
-            self.preserve_modules = self.preserve_modules | {self.__output_package}
-        self.entry = entry or set()
+        output_package = paths.single_package_root
+        if output_package is not None:
+            config = replace(config, preserve_modules=config.preserve_modules | {output_package})
+
+        limiter = CapacityLimiter(
+            total_tokens=config.workers or int((getattr(os, "process_cpu_count", os.cpu_count)() or 1) * 1.6)
+        )
+
+        # FFI binaries have no source to parse - they only occupy a namespace slot, so keep them apart
+        module_specs: list[_spec.ModuleSpec] = [s for s in paths if not isinstance(s, _spec.FfiModuleSpec)]
+        ffi_specs: list[_spec.FfiModuleSpec] = [s for s in paths if isinstance(s, _spec.FfiModuleSpec)]
+
+        super().__init__(
+            _Context(
+                frozen=_FinalContext(
+                    config=config,
+                    reporter=reporter,
+                    limiter=limiter,
+                    module_specs=module_specs,
+                    ffi_specs=ffi_specs,
+                    output_package=output_package
+                ),
+                entry=set(config.entry),
+                project={},
+                modules=[],
+                modules_len=0,
+            )
+        )
 
     @classmethod
     async def minify(
         cls,
-        config: TransformConfig,
-        paths: set[str],
+        paths: Collection[str],
+        config: Config,
         /,
-        reporter: BaseReporter | None = None,
-        output: Path | None = None,
-        *args,
-        **kwargs
+        reporter: Reporter | None = None,
     ):
-        # noinspection argument-list,bad-assignment
-        reporter: BaseReporter = reporter or HeadlessReporter()
+        """
+        Minify the modules under `paths` as one project.
+        """
 
-        if len(paths) > 1 and not output:
+        reporter = reporter or NullReporter()
+        reporter.plan(cls.STAGES)
+
+        if len(paths) > 1 and not config.output_path:
             raise ValueError("Multiple paths are given, but no output path specified")
+        if config.rename_modules and not config.output_path:
+            raise ValueError("rename_modules requires a separate output directory"
+                             " - it would otherwise leave the renamed file's old copy behind")
 
-        with reporter.prepare("Resolving paths"):
-            pp = PathProvider(paths)
-            await pp.resolve()
+        # resolving paths awaits one file system call at a time, so it takes one thread at most
+        pp = PathProvider(set(paths))
+        await pp.resolve()
 
-        await cls(pp, config, reporter, output, *args, **kwargs)()
+        # noinspection argument-list
+        return await cls(pp, config, reporter)()
 
-    async def __call__(self, /):
-        with self.__reporter.prepare("Calculating task graph"):
-            from terser.utils.cli_helper import TqdmDebugTaskGraph
-            m, f = len(self.__module_specs), len(self.__ffi_specs)
+    async def __call__(self, /) -> dict[str, str | None]:
+        await typed[MinifyModuleStep](MinifyModuleStep.__init__)(self, self._ctx)()
+        await typed[LinkStep](LinkStep.__init__)(self, self._ctx)()
+        await typed[TransformStep](TransformStep.__init__)(self, self._ctx)()
+        await typed[ObfuscationStep](ObfuscationStep.__init__)(self, self._ctx)()
+        await typed[MangleStep](MangleStep.__init__)(self, self._ctx)()
+        await typed[FinalizationStep](FinalizationStep.__init__)(self, self._ctx)()
+        await typed[PrintStep](PrintStep.__init__)(self, self._ctx)()
+        return self._ctx.outputs
 
-            tg = TqdmDebugTaskGraph(
-                TqdmDebugTaskGraph.Task(m,
-                    TqdmDebugTaskGraph.Step(),
-                    TqdmDebugTaskGraph.Step(),
-                    TqdmDebugTaskGraph.Step(),
-                    TqdmDebugTaskGraph.IterableStep(self.__config.passes),
-                    TqdmDebugTaskGraph.Step(),
-                ),
-                TqdmDebugTaskGraph.IterableStep(m),
-                TqdmDebugTaskGraph.Step(),
-                TqdmDebugTaskGraph.Step(),
-                TqdmDebugTaskGraph.IterableStep(m * self.__config.passes),
-                TqdmDebugTaskGraph.IterableStep(m + 1),
-                TqdmDebugTaskGraph.Task(m + f),
-            )
-            del TqdmDebugTaskGraph, m, f
 
-        with self.__reporter as reporter:
-            reporter.init(task_graph=tg)
-            del tg
+class MinifyModuleStep(PipelineStep[_Context]):
+    def __run(self, source: str, spec: ModuleSpec, /):
+        local = sorted(preserved_names(str(spec), self._ctx.frozen.config.preserve_locals))
+        if not self._ctx.frozen.config.rename_star_args:
+            local += STAR_ARGS
 
-            modules, project = await self.__minify_modules()
+        return minify(
+            source,
+            spec,
+            self._ctx.frozen.config,
+            preserved_names=local,
+            preserved_globals=sorted(
+                preserved_names(str(spec), self._ctx.frozen.config.preserve_globals)
+            ),
+            preserve_type_checking=any(
+                fnmatch.fnmatch(str(spec), pattern)
+                for pattern in self._ctx.frozen.config.preserve_type_checking
+            ),
+        )
 
-            for module in self.__reporter("Linking", modules):
-                linker.link(module, project)
+    @override
+    async def __call__(self, /) -> None:
+        modules: list = [None] * len(self._ctx.frozen.module_specs)
+        with self._ctx.frozen.reporter.stage("Compiling modules", len(modules)) as stage:
+            def __compile(spec: ModuleSpec, /):
+                # in the thread: a module waiting for one is not being compiled yet
+                with stage.item(str(spec)):
+                    return self.__run(_read(spec.path), spec)
 
-            with self.__reporter("Tree-shaking"):
-                entry = await self.__resolve_entry(project)
-                project = tree_shake.shake(project, entry)
-                modules = [module_ref.ast for module_ref in project.values()]
+            async def __worker(i: int, spec: ModuleSpec, /):
+                # one thread per module, for reading and compiling it
+                module, _ = await to_thread.run_sync(__compile, spec, limiter=self._ctx.frozen.limiter)
+                modules[i] = module
 
-            with self.__reporter("Mangling modules"):
-                new_dotted = mangler.mangle_modules(project, self.rename_modules, self.preserve_modules, entry)
-
-            # whole passes over every module, until a pass changes none of them
-            caches = [transforms.TransformCache(self.__config) for _ in modules]
-            modules_len, changed = len(modules), False
-            for j in self.__reporter("Applying transforms", range(self.__config.passes * len(modules))):
-                i = j % modules_len
-                modules[i], modified = caches[i].run(modules[i], 2)
-                changed |= modified
-
-                if i == modules_len - 1:
-                    if not changed:
-                        break
-                    changed = False
-
-            # for richer progress bar support
-            iter_ = iter(self.__reporter("Mangling", range(-1, modules_len)))
-            next(iter_)
-            mangler.mangle_globals(project, self.rename_globals, self.preserve_globals)
-
-            for i in iter_:
-                # global mangling changed the modules, so the caches start over
-                modules[i] = transforms.TransformCache(self.__config).run_passes(modules[i], 4)
-
-            await self.__dump_results(modules, project, new_dotted)
-
-    async def __minify_modules(self, /) -> tuple[list[ast.Module], dict[str, ModuleRef]]:
-        def __run(task: Task, source: str, spec: ModuleSpec, /):
-            local = sorted(preserved_names(str(spec), self.preserve_locals))
-            return minify(
-                task, source, spec,
-                self.__config,
-                hoist_literals=self.hoist_literals,
-                rename=self.rename_locals,
-                preserved_names=local,
-            )
-
-        modules: list = [None] * len(self.__module_specs)
-        async def __worker(i: int, task: Task, spec: ModuleSpec, /):
-            source = await _read_async(spec.path, limiter=self.__limiter)
-            module, _ = await to_thread.run_sync(__run, task, source, spec, limiter=self.__limiter)
-            modules[i] = module
-            task.done()
-
-        async with _task_group() as tg:
-            # TODO: Cleanup this shit
-            j = len(self.__module_specs) - 1
-            for i, (task, spec) in enumerate(self.__reporter.iter(self.__module_specs, "Compiling modules")):
-                # noinspection async-call
-                t = tg.start_soon(__worker, i, task, spec)
-
-                if i == j:
-                    await t.wait()  # forcefully blocks the generator from finishing
+            async with _task_group() as tg:
+                for n, m in enumerate(self._ctx.frozen.module_specs):
+                    # noinspection async-call
+                    tg.start_soon(__worker, n, m)
 
         if not all(modules):
             raise RuntimeError("Failed to compile all modules")
 
         modules: list[ast.Module]
         project: dict[str, ModuleRef] = {str(ref(x).spec): ref(x) for x in modules}
-        return modules, project
+        self._ctx.modules, self._ctx.project = modules, project
+        self._ctx.modules_len = len(modules)
+
+
+class LinkStep(PipelineStep[_Context]):
+    @override
+    async def __call__(self, /) -> None:
+        with self._ctx.frozen.reporter.stage("Linking", self._ctx.modules_len) as stage:
+            for module in stage.iter(self._ctx.modules):
+                linker.link(module, self._ctx.project)
+            self._ctx.entry = await self.__resolve_entry(self._ctx.project)
+
+        if self._ctx.frozen.config.rename_modules or self._ctx.frozen.config.rename_globals or self._ctx.entry:
+            self.__warn_dynamic_imports(self._ctx.project)
 
     async def __resolve_entry(self, project: dict[str, ModuleRef], /) -> set[str]:
         """Resolve `self.entry` (dotted module paths or file paths) against `project`'s modules."""
 
         resolved: set[str] = set()
-        for value in self.entry:
+        for value in self._ctx.entry:
             if value in project:
                 resolved.add(value)
                 continue
@@ -266,59 +248,136 @@ class ProjectMinifier(Pipeline):
 
         return resolved
 
-    async def __dump_results(
-        self,
-        modules: list[ast.Module],
-        project: dict[str, ModuleRef],
-        new_dotted: dict[str, str],
-        /,
-    ):
-        async def module(node: ast.Module, /):
-            spec = ref(node).spec
+    def __warn_dynamic_imports(self, project: dict[str, ModuleRef], /) -> None:
+        """Warn about the dynamic import calls (`__import__()`, ...) this run can't follow."""
 
-            if self.__output is None:
-                # in-place: write each module back to its own original file
-                dest = spec.path
-            else:
-                dest = self.__output / _module_output_path(spec, new_dotted, self.__output_package is not None)
-                await dest.parent.mkdir(parents=True, exist_ok=True)
+        for dotted, module_ref in sorted(project.items()):
+            for found in module_ref.dynamic_imports:
+                if found.name:
+                    continue
+                self._ctx.frozen.reporter.warn(
+                    f"{dotted}, {found.location}: `{found.callee}()` is given a module name that is not a "
+                    "literal, so renaming modules or globals and tree-shaking can't follow it (keep what it "
+                    "imports with `preserve_modules`, `preserve_globals` and `entry`)",
+                    DynamicImportWarning,
+                )
 
-            source = await to_thread.run_sync(unparse, str(spec.path), None, node, self.prefer_single_line)
-            await _write_async(dest, source, limiter=self.__limiter)
 
-        async def binary(ffi_spec: _spec.FfiModuleSpec, /):
-            if self.__output is None:
-                # in-place: the FFI file is already where it should be
-                return
+class TransformStep(PipelineStep[_Context]):
+    def __tree_shake(self, /) -> None:
+        self._ctx.project = tree_shake.shake(self._ctx.project, self._ctx.entry)
+        self._ctx.modules = [module_ref.ast for module_ref in self._ctx.project.values()]
+        self._ctx.modules_len = len(self._ctx.modules)
 
-            parent, _, _ = str(ffi_spec).rpartition('.')
+    def _prepare_cache(self):
+        self.__caches = [transforms.TransformCache(self._ctx.frozen.config.transform) for _ in self._ctx.modules]
 
-            if parent and parent not in project:
-                # the containing package was tree-shaken away - no reachable consumer left
-                return
+    def _transform(self, i: int, stage: Stage, separated: bool, flags: int, /) -> Any:
+        with stage.item(str(ref(node := self._ctx.modules[i]).spec)):
+            cache = self.__caches[i]
+            # noinspection argument-list
+            value = (cache.run_passes if separated else cache.run)(node, flags)
+            self._ctx.modules[i] = value if separated else value[0] # type: ignore[ty:invalid-assignment,ty:not-subscriptable]
+            return value
 
-            new_parent = new_dotted.get(parent, parent).split('.') if parent else []
-            if self.__output_package is not None:
-                new_parent = new_parent[1:]
-            dest = self.__output.joinpath(*new_parent, ffi_spec.path.name)
+    @override
+    async def __call__(self, /) -> None:
+        self.__tree_shake()
+        self._prepare_cache()
+        total = self._ctx.frozen.config.transform.passes * self._ctx.modules_len
+        with self._ctx.frozen.reporter.stage("Applying transforms", total) as stage:
+            for _ in range(self._ctx.frozen.config.transform.passes):
+                changed = False
+                for i in range(self._ctx.modules_len):
+                    _, diff = self._transform(i, stage, False, 2)
+                    changed |= diff
 
-            await dest.parent.mkdir(parents=True, exist_ok=True)
-            await to_thread.run_sync(shutil.copy2, str(ffi_spec.path), str(dest))
+                if not changed:
+                    break
 
-        def wrap[T](func: Callable[[T], Awaitable[None]]) -> Callable[[T], Callable[[Task], Awaitable[None]]]:
-            def wrapper(t: T) -> Callable[[Task], Awaitable[None]]:
-                async def runner(task: Task, /):
-                    await func(t)
-                    task.done()
-                return runner
-            return wrapper
 
-        tasks = set(map(wrap(module), modules)) | set(map(wrap(binary), self.__ffi_specs))
-        async with _task_group() as tg:
-            j = len(tasks) - 1
-            for i, (task, func) in enumerate(self.__reporter.iter(tasks, "Writing output")):
-                # noinspection async-call
-                t = tg.start_soon(func, task)
+class FinalizationStep(TransformStep):
+    @override
+    async def __call__(self, /) -> None:
+        self._prepare_cache()
 
-                if i == j:
-                    await t.wait()
+        async def __worker(i: int, stage: Stage, /):
+            # one thread per module, for finalizing it
+            await to_thread.run_sync(self._transform, i, stage, True, 4, limiter=self._ctx.frozen.limiter)
+
+        with self._ctx.frozen.reporter.stage("Finalizing", self._ctx.modules_len) as p:
+            async with _task_group() as tg:
+                for q in range(self._ctx.modules_len):
+                    # noinspection async-call
+                    tg.start_soon(__worker, q, p)
+
+
+class ObfuscationStep(PipelineStep[_Context]):
+    @override
+    async def __call__(self, /) -> None:
+        with self._ctx.frozen.reporter.stage("Mangling globals"):
+            mangler.mangle_globals(self._ctx.project, self._ctx.frozen.config.rename_globals, self._ctx.frozen.config.preserve_globals)
+
+
+class MangleStep(PipelineStep[_Context]):
+    @override
+    async def __call__(self, /) -> None:
+        with self._ctx.frozen.reporter.stage("Mangling modules"):
+            self._ctx.new_dotted = mangler.mangle_modules(self._ctx.project, self._ctx.frozen.config.rename_modules, self._ctx.frozen.config.preserve_modules, self._ctx.entry)
+
+
+class PrintStep(PipelineStep[_Context]):
+    def module(self, node: ast.Module, /):
+        spec = ref(node).spec
+
+        # in-place: write each module back to its own original file
+        dest = spec.path if self._ctx.frozen.config.output_path is None else \
+            self._ctx.frozen.config.output_path / _module_output_path(spec, self._ctx.new_dotted, self._ctx.frozen.output_package is not None)
+
+        _write(dest, unparse(str(spec.path), None, node, self._ctx.frozen.config.prefer_single_line))
+        self._ctx.outputs[str(spec.path)] = str(dest)
+
+    def binary(self, ffi_spec: _spec.FfiModuleSpec, /):
+        if self._ctx.frozen.config.output_path is None:
+            # in-place: the FFI file is already where it should be
+            self._ctx.outputs[str(ffi_spec.path)] = str(ffi_spec.path)
+            return
+
+        parent, _, _ = str(ffi_spec).rpartition('.')
+
+        if parent and parent not in self._ctx.project:
+            # the containing package was tree-shaken away - no reachable consumer left
+            return
+
+        new_parent = self._ctx.new_dotted.get(parent, parent).split('.') if parent else []
+        if self._ctx.frozen.output_package is not None:
+            new_parent = new_parent[1:]
+        dest = Path(self._ctx.frozen.config.output_path).joinpath(*new_parent, ffi_spec.path.name)
+
+        os.makedirs(dest.parent, exist_ok=True)
+        shutil.copy2(ffi_spec.path, dest)
+        self._ctx.outputs[str(ffi_spec.path)] = str(dest)
+
+    @override
+    async def __call__(self, /) -> None:
+        self._ctx.outputs = dict.fromkeys(
+            str(spec.path) for spec in (*self._ctx.frozen.module_specs, *self._ctx.frozen.ffi_specs)
+        )
+
+        with self._ctx.frozen.reporter.stage("Writing output", self._ctx.modules_len + len(self._ctx.frozen.ffi_specs)) as stage:
+            def write[T](func: Callable[[T], None], t: T, name: str, /):
+                # in the thread: a file waiting for one is not being written yet
+                with stage.item(name):
+                    func(t)
+
+            async def writer[T](func: Callable[[T], None], t: T, name: str, /):
+                # one thread per file, for everything writing it takes
+                await to_thread.run_sync(write, func, t, name, limiter=self._ctx.frozen.limiter)
+
+            async with _task_group() as tg:
+                for node in self._ctx.modules:
+                    # noinspection async-call
+                    tg.start_soon(writer, self.module, node, str(ref(node).spec))
+                for ffi_spec in self._ctx.frozen.ffi_specs:
+                    # noinspection async-call
+                    tg.start_soon(writer, self.binary, ffi_spec, str(ffi_spec))

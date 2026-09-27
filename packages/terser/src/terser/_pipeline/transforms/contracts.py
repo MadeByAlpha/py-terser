@@ -7,7 +7,7 @@ from terser.utils import contracts
 from ..resolver.binding import ImportBinding
 from ._suite import SuiteTransformer, TransformerFlag
 
-if TYPE_CHECKING:
+if __debug__ and TYPE_CHECKING:
     from ...config import TransformConfig
 
 

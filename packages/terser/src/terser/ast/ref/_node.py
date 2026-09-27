@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, ClassVar, override
 
 from terser.ast.ast import AST as Node, iter_child_nodes
 
-if TYPE_CHECKING:
+if __debug__ and TYPE_CHECKING:
     from ast import AST
     from typing import Final
 
@@ -57,3 +57,5 @@ class NodeRef[T: AST]:
 
 
 ref = lambda node: getattr(node, _FIELD)
+ref_or_none = lambda node: getattr(node, _FIELD, None)
+"""`ref(node)`, or None for a node given none (made after the module was parsed)"""

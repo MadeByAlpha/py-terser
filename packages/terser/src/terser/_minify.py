@@ -1,16 +1,20 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from ._pipeline import preprocessor, parser, resolver, transforms, mangler
+from ._pipeline import (
+    dynamic_imports,
+    mangler,
+    parser,
+    preprocessor,
+    resolver,
+    transforms,
+)
 from ._pipeline.printer import ModulePrinter
-from .ast import CompareError, ast, compare_ast
+from .ast import CompareError, ast, compare_ast, ref
 from .exceptions import InvalidTransformError, UnbeneficialMinificationError
 
-if TYPE_CHECKING:
-    from alpha93.progression import Task
+if __debug__ and __import__("typing").TYPE_CHECKING:
     from .ast.ref import ModuleSpec
-    from .config import TransformConfig
+    from .config import Config
 
 
 def unparse(
@@ -49,50 +53,47 @@ def unparse(
 
 
 def minify(
-    task: Task,
     source: str,
     spec: ModuleSpec | str,
+    config: Config,
     /,
-    config: TransformConfig,
     *,
-    strict: bool = False,
-    defines: dict[str, bool] | None = None,
-    rename: bool = True,
     preserved_names: list[str] | None = None,
-    hoist_literals: bool = True,
+    preserved_globals: list[str] | None = None,
+    preserve_type_checking: bool = False,
 ) -> tuple[ast.Module, str | None]:
-    with task("Preprocessing sources"):
-        source, shebang = preprocessor.preprocess(source, defines, strict)
+    source, shebang = preprocessor.preprocess(source, config.defines, config.strict)
+    module = parser.parse(source, spec, optimize=config.transform.optimize)
+    ref(module).preserve_type_checking = preserve_type_checking
 
-    with task("Parsing AST"):
-        module = parser.parse(source, spec, optimize=config.optimize)
+    for transform in transforms.__transforms__:
+        if not transform.is_enabled(config.transform) or transform.FLAGS > 0:
+            continue
 
-        for transform in transforms.__transforms__:
-            if not transform.is_enabled(config) or transform.FLAGS > 0:
-                continue
+        module: ast.Module = transform(config.transform)(module)
 
-            module: ast.Module = transform(config)(module)
+    resolver.resolve(module)
+    resolver.bind(module)
+    mangler.mark_preserved(module, preserved_names, preserved_globals)
 
-    with task("Resolving names"):
-        resolver.resolve(module)
-        resolver.bind(module)
-
-    cache = transforms.TransformCache(config)
-    for _ in task("Applying transforms", range(config.passes)):
+    cache = transforms.TransformCache(config.transform)
+    for _ in range(config.transform.passes):
         module, changed = cache.run(module, 1)
         if not changed:
             break
 
-    with task("Mangling"):
-        if hoist_literals:
-            mangler.hoist_literals(module)
+    # before hoisting literals, which would take the module names out of the calls
+    dynamic_imports.find(module)
 
-        if rename:
-            mangler.mangle_locals(module, rename, preserved_names)
+    if config.hoist_literals:
+        mangler.hoist_literals(module)
 
-        # mangling changed the module behind the previous cache's back, so start over. FLAGS == 2
-        # transforms need the module linked, which only happens after this function
-        module = transforms.TransformCache(config).run_passes(module, 1)
+    if config.rename_locals:
+        mangler.mangle_locals(module, config.rename_locals, preserved_names)
+
+    # mangling changed the module behind the previous cache's back, so start over. FLAGS == 2
+    # transforms need the module linked, which only happens after this function
+    module = transforms.TransformCache(config.transform).run_passes(module, 1)
 
     # FIXME: lineno problem
     # try:

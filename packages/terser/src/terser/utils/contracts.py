@@ -4,7 +4,7 @@ import ast
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
+if __debug__ and __import__("typing").TYPE_CHECKING:
     from types import EllipsisType
 
 

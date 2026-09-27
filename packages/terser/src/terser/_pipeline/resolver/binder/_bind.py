@@ -8,7 +8,7 @@ from ..binding import Binding, BuiltinBinding, UnresolvedBinding
 from ..util import scope_ref_global, scope_ref_nonlocal
 from ...parser._scope import ScopeResolver
 
-if TYPE_CHECKING:
+if __debug__ and __import__("typing").TYPE_CHECKING:
     from terser.ast.ref import ScopedNode
 
 
