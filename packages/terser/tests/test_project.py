@@ -330,3 +330,19 @@ def test_keyword_parameter_alias(tmp_path):
     minified = read_tree(out)["main.py"]
     assert "discount_percentage=0" in minified
     assert run_py("main.py", cwd=out).stdout == expected
+
+
+def test_entry_in_package_keeps_package_names(tmp_path):
+    # `python -m app.main` (or `uvicorn app.main:app`) finds the entry by its whole dotted path
+    root = write_tree(tmp_path / "src", {
+        "app/__init__.py": "",
+        "app/main.py": "from app.util import greet\nprint(greet())\n",
+        "app/util.py": "def greet():\n    return 'hi'\n",
+    })
+    out = tmp_path / "out"
+    minify(root, output=out, entry={"app.main"}, rename_modules=True, rename_globals=True)
+
+    tree = read_tree(out)
+    assert "app/main.py" in tree
+    assert "app/util.py" not in tree
+    assert run_py("-m", "app.main", cwd=out).stdout == "hi\n"

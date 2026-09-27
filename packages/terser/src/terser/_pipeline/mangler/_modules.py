@@ -193,7 +193,7 @@ def mangle_modules(
     :param project: Every module in the project, keyed by dotted module path
     :param rename_modules: If module/package names may be renamed
     :param preserved: Dotted-path glob patterns for modules that must keep their name
-    :param entry: Dotted paths of entry modules - always preserved, since their filename may be
+    :param entry: Dotted paths of entry modules - always preserved (their packages too), since their filename may be
         invoked externally (e.g. as a script)
     :return: Every module's dotted path, old -> new (identity if not renamed)
     """
@@ -203,7 +203,8 @@ def mangle_modules(
         return identity
 
     preserved = preserved or set()
-    entry = entry or set()
+    # an entry is found by its whole dotted path (`python -m pkg.main`), so its packages keep their names too
+    entry = {'.'.join(parts[:i]) for dotted in entry or () for parts in [dotted.split('.')] for i in range(1, len(parts) + 1)}
 
     groups: dict[str, list[str]] = {}
     for dotted in project:
