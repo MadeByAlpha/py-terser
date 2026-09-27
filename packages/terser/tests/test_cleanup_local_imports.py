@@ -29,7 +29,14 @@ def test_cleanup_local_imports(source, expected):
 ])
 def test_respect_all(source, expected):
     config = only("cleanup_local_imports", "respect_all")
-    assert_code(apply_transform(source, CleanupLocalImports, config), expected)
+    assert_code(apply_transform(source, CleanupLocalImports, config, link=True), expected)
+
+
+def test_respect_all_waits_for_the_project_to_be_linked():
+    # before, it's not known if other modules import `os` from this one
+    source = "import os\nimport sys\n__all__ = ['x']\nx = sys"
+    config = only("cleanup_local_imports", "respect_all")
+    assert_code(apply_transform(source, CleanupLocalImports, config), source)
 
 
 def test_removed_import_is_forgotten():

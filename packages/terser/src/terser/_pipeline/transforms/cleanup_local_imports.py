@@ -56,7 +56,12 @@ class CleanupLocalImports(SuiteTransformer):
                 kept.append(alias)
                 continue
 
-            if in_module_scope and (not self._config.respect_all or binding.exported):
+            # only once the project is linked (`mangler.mark_imported`) is it known if other modules
+            # import a module-level name
+            if in_module_scope and (
+                not self._config.respect_all or binding.exported or binding.preserved
+                or not getattr(ref(self._module), 'linked', False)
+            ):
                 kept.append(alias)
                 continue
 

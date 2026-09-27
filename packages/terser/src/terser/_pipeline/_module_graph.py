@@ -93,6 +93,11 @@ def dependencies(module_ref: ModuleRef, project: dict[str, ModuleRef]) -> set[st
             if (target := alias_target(module_ref, alias).target) is not None:
                 deps.add(str(target.spec))
 
+    # `from x import *` imports x, whether a name it provides is used or not
+    for unresolved in module_ref.wildcard_targets.values():
+        if unresolved.path is not None and unresolved.path in project:
+            deps.add(unresolved.path)
+
     for binding in import_bindings(module_ref):
         if binding.target is None:
             continue

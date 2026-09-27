@@ -106,6 +106,19 @@ def _attribute_links(project: dict[str, ModuleRef]):
     return links
 
 
+def mark_imported(project: dict[str, ModuleRef]) -> None:
+    """
+    Mark the module-level bindings other modules of the linked `project` import (`from x import
+    y`) or read (`x.y`) as preserved: they must stay bound, even once nothing in their own module
+    reads them (an import re-exported without `__all__`, say).
+    """
+
+    for _, _, origin in _from_import_links(project):
+        origin.mark_preserved()
+    for _, origin in _attribute_links(project):
+        origin.mark_preserved()
+
+
 def mangle_globals(project: dict[str, ModuleRef], rename_globals: bool = False, preserved: dict[str, list[str]] | None = None):
     """
     Mangle module-level (global) bindings across a whole project

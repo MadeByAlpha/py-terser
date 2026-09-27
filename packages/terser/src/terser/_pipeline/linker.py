@@ -90,6 +90,7 @@ def link(module: ast.Module, project: dict[str, ModuleRef]) -> None:
     """
 
     module_ref = ref(module)
+    module_ref.linked = True
 
     for binding in module_ref.import_targets:
         for alias in binding.aliases:

@@ -12,7 +12,8 @@ import anyio
 import terser
 from alpha93.progression import Reporter, Stage
 from terser._minify import unparse
-from terser._pipeline import parser, resolver
+from terser._pipeline import linker, mangler, parser, resolver, transforms
+from terser.ast import ref
 from terser.ast import CompareError, compare_ast
 from terser.ast.ref._module._spec import SingleFileModuleSpec
 from terser.config import Config, TransformConfig
@@ -39,10 +40,11 @@ def only(*enabled: str, **overrides) -> TransformConfig:
     return TransformConfig(**values)
 
 
-def apply_transform(source: str, transform: type, config: TransformConfig | None = None) -> ast.Module:
+def apply_transform(source: str, transform: type, config: TransformConfig | None = None, *, link: bool = False) -> ast.Module:
     """
     Run a single transform on `source` the way `_minify.minify` does: pre-transforms (FLAGS == 0)
-    before name resolution, the others after it.
+    before name resolution, the others after it. With `link`, the module is linked as a project of
+    its own first, the way `terser.minify` does before its later transform passes.
     """
 
     config = config or TransformConfig()
@@ -53,6 +55,12 @@ def apply_transform(source: str, transform: type, config: TransformConfig | None
 
     resolver.resolve(module)
     resolver.bind(module)
+
+    if link:
+        project = {str(ref(module).spec): ref(module)}
+        linker.link(module, project)
+        transforms.mark_classes(project)
+        mangler.mark_imported(project)
 
     if transform.FLAGS != 0:
         module = transform(config)(module)

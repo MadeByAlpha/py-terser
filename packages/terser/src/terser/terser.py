@@ -87,6 +87,7 @@ def minify(
     project = {str(module_ref.spec): module_ref}
     linker.link(module, project)
     transforms.mark_classes(project)
+    mangler.mark_imported(project)
 
     module = transforms.TransformCache(config).run_passes(module, 2)
     mangler.mangle_globals(project, rename_globals, {"*": list(preserve_globals or ())})

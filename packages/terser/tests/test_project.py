@@ -452,3 +452,30 @@ def test_protocol_subclassed_in_another_module(tmp_path):
     out = tmp_path / "out"
     minify(root, output=out, config=TransformConfig(remove_typing_classes=True), entry={"main"})
     assert run_py("main.py", cwd=out).stdout == "Handler\n"
+
+
+def test_entry_tree_shaking_keeps_wildcard_imports(tmp_path):
+    # `httpx` re-exports `from ._api import *`, and `main` only reads what `pkg` re-exports
+    root = write_tree(tmp_path / "src", {
+        "main.py": "import pkg\nprint(pkg.get())\n",
+        "pkg/__init__.py": "from ._api import *\nfrom ._other import *\n",
+        "pkg/_api.py": "__all__ = ['get']\ndef get():\n    return 'got'\n",
+        "pkg/_other.py": "import sys\nsys.modules['pkg'].SIDE = 1\n",
+    })
+    out = tmp_path / "out"
+    minify(root, output=out, entry={"main"})
+    assert set(read_tree(out)) == {"main.py", "pkg/__init__.py", "pkg/_api.py", "pkg/_other.py"}
+    assert run_py("main.py", cwd=out).stdout == "got\n"
+
+
+def test_respect_all_keeps_what_other_modules_import(tmp_path):
+    # without `__all__`, `Cython` re-exports `from .Shadow import __version__` for `cython.py`
+    root = write_tree(tmp_path / "src", {
+        "main.py": "import pkg\nfrom pkg import __version__\nprint(__version__, pkg.helper())\n",
+        "pkg/__init__.py": "from .shadow import __version__\nfrom .shadow import helper\nimport os\n",
+        "pkg/shadow.py": "__version__ = '3.3'\ndef helper():\n    return 'h'\n",
+    })
+    out = tmp_path / "out"
+    minify(root, output=out, config=TransformConfig(respect_all=True), entry={"main"})
+    assert "os" not in read_tree(out)["pkg/__init__.py"]
+    assert run_py("main.py", cwd=out).stdout == "3.3 h\n"
