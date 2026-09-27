@@ -275,7 +275,7 @@ class SuiteTransformer(NodeVisitor, ABC):
             :param node: The node to get the function namespace of
             """
 
-            if isinstance(node, (ast.FunctionDef, ast.Module, ast.AsyncFunctionDef)):
+            if isinstance(node, (ast.FunctionDef, ast.Module, ast.AsyncFunctionDef, ast.Lambda)):
                 return node
             return nearest_function_namespace(ref(node).parent)
 
