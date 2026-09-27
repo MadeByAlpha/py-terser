@@ -1,3 +1,5 @@
+import ast
+
 import pytest
 
 from helpers import apply_transform, assert_code, only
@@ -16,3 +18,12 @@ from terser._pipeline.transforms import CombineImports
 ])
 def test_combine_imports(source, expected):
     assert_code(apply_transform(source, CombineImports, only("combine_imports")), expected)
+
+
+def test_lone_import_is_kept():
+    # not rebuilt, which would bind its names a second time
+    from terser.ast import ref
+
+    module = apply_transform("import a\nx = 1\nimport b", CombineImports, only("combine_imports"))
+    [a] = [binding for binding in ref(module).bindings if binding.name == "a"]
+    assert [node for node in a.references if isinstance(node, ast.alias)] == [module.body[0].names[0]]

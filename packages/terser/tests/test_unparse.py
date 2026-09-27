@@ -66,3 +66,22 @@ def test_prefer_single_line():
 def test_unbeneficial():
     with pytest.raises(UnbeneficialMinificationError):
         unparse("<test>", "x=1", ast.parse("x=1"))
+
+
+@pytest.mark.parametrize("value,printed", [
+    ("a\\.b\\.c", "r'a\\.b\\.c'"),
+    ("\\d+\\s*", "r'\\d+\\s*'"),
+    ("it's \\d\\d", 'r"it\'s \\d\\d"'),
+    # not shorter
+    ("plain", "'plain'"),
+    ("a\\b", "'a\\\\b'"),
+    # can't be raw: a newline, both quotes, or an odd run of trailing backslashes
+    ("\\d\n", "'\\\\d\\n'"),
+    ("'\"\\d\\d", repr("'\"\\d\\d")),
+    ("\\d\\d\\", repr("\\d\\d\\")),
+])
+def test_raw_strings(value, printed):
+    module = ast.parse(f"x = {value!r}")
+    code = unparse("<test>", None, module)
+    assert code == f"x={printed}"
+    assert ast.literal_eval(code.removeprefix("x=")) == value

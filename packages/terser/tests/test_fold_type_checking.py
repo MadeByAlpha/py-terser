@@ -27,6 +27,19 @@ def test_fold_type_checking(source, expected):
     assert_code(apply_transform(source, FoldTypeChecking, only("fold_type_checking")), expected)
 
 
+@pytest.mark.parametrize("source,expected", [
+    ("print(__import__('typing').TYPE_CHECKING)", "print(False)"),
+    ("t = __import__('typing')\nprint(t.TYPE_CHECKING)", "t = __import__('typing')\nprint(False)"),
+    ("tc = __import__('typing_extensions').TYPE_CHECKING\nprint(tc)", "tc = False\nprint(tc)"),
+    ("import importlib\nprint(importlib.import_module('typing').TYPE_CHECKING)", "import importlib\nprint(False)"),
+    # assigned more than once, or not `typing`
+    ("t = __import__('typing')\nt = x\nprint(t.TYPE_CHECKING)", "t = __import__('typing')\nt = x\nprint(t.TYPE_CHECKING)"),
+    ("print(__import__('compat').TYPE_CHECKING)", "print(__import__('compat').TYPE_CHECKING)"),
+])
+def test_dynamic_imports(source, expected):
+    assert_code(apply_transform(source, FoldTypeChecking, only("fold_type_checking")), expected)
+
+
 @pytest.mark.parametrize("optimize", [-1, 1])
 def test_type_checking_blocks_are_removed(optimize):
     source = """\
