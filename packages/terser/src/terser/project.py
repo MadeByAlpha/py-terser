@@ -267,7 +267,8 @@ class LinkStep(PipelineStep[_Context]):
 
 class TransformStep(PipelineStep[_Context]):
     def __tree_shake(self, /) -> None:
-        self._ctx.project = tree_shake.shake(self._ctx.project, self._ctx.entry)
+        binaries = {str(spec): os.fspath(spec.path) for spec in self._ctx.frozen.ffi_specs}
+        self._ctx.project = tree_shake.shake(self._ctx.project, self._ctx.entry, binaries)
         self._ctx.modules = [module_ref.ast for module_ref in self._ctx.project.values()]
         self._ctx.modules_len = len(self._ctx.modules)
 

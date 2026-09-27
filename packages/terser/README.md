@@ -221,7 +221,9 @@ class
 - is decorated with `dataclasses.dataclass`, `pydantic.dataclasses.dataclass` or an `attrs` class decorator,
 - or leads, through its bases or metaclass, to `pydantic.BaseModel`, `pydantic.RootModel`, pydantic's `ModelMetaclass`,
   `pydantic.v1.BaseModel`, `pydantic_settings.BaseSettings`, `sqlmodel.SQLModel`, `msgspec.Struct`, `TypedDict` or
-  `NamedTuple`. In project mode, bases are followed into the other modules of the project.
+  `NamedTuple`, or to a class reading annotations itself (its body reads `__annotations__`, or calls
+  `typing.get_type_hints()` or `inspect.get_annotations()`: a base checking its subclasses in `__init_subclass__`, a
+  metaclass). In project mode, bases are followed into the other modules of the project.
 
 Other code reading annotations (FastAPI endpoints and dependencies, `inspect.signature()`, `typing.get_type_hints()`)
 keeps them under `@terser_hints.preserve_annotations`, or when `--preserve-annotations` names it:
@@ -234,7 +236,8 @@ terser src/ --output build/ --preserve-annotations 'app.models' 'app.deps::Setti
 ### Tree-shaking
 
 When `--entry` is given, modules that are not reachable (through imports) from any entry module are dropped from the
-output. Entry modules, and the packages they are in, are never renamed by `--rename-modules`.
+output. A native extension a kept module imports keeps the modules whose names are in its binary (the ones
+it imports from C). Entry modules, and the packages they are in, are never renamed by `--rename-modules`.
 
 Both follow imports statically. `__import__()` and `importlib.import_module()` count as imports when the module is
 named by literals (a relative name too, against a literal package or `__package__`): tree-shaking keeps what they

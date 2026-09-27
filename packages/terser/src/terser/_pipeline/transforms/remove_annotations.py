@@ -48,6 +48,30 @@ def _is_annotated(annotation: ast.expr | None) -> bool:
     return isinstance(annotation, ast.Subscript) and qualified_name(annotation.value) in _ANNOTATED_NAMES
 
 
+# functions reading the annotations of what they are given
+_ANNOTATION_GETTERS = frozenset({
+    "typing.get_type_hints", "typing_extensions.get_type_hints",
+    "inspect.get_annotations", "annotationlib.get_annotations",
+})
+
+
+def _reads_annotations(node: ast.ClassDef) -> bool:
+    """
+    If the body of `node` reads annotations: its subclasses' (in `__init_subclass__`, like anyio's
+    `TypedAttributeSet`), or its instances' (a metaclass, like pydantic's)
+    """
+
+    for child in ast.walk(node):
+        if (
+            isinstance(child, ast.Name) and child.id == '__annotations__'
+            or isinstance(child, ast.Attribute) and child.attr == '__annotations__'
+            or isinstance(child, ast.Constant) and child.value == '__annotations__'  # `getattr(cls, "__annotations__")`
+            or isinstance(child, ast.Call) and qualified_name(child.func) in _ANNOTATION_GETTERS
+        ):
+            return True
+    return False
+
+
 def _syntactic_reader(node: ast.ClassDef) -> bool:
     """A class read by name alone: `@dataclass`-decorated, or a direct `NamedTuple`/`TypedDict` subclass."""
 
@@ -66,9 +90,10 @@ def _syntactic_reader(node: ast.ClassDef) -> bool:
 
 class _Readers:
     """
-    Which classes have their annotations read at run time: ones `_syntactic_reader` tells, and the
-    ones whose bases or metaclass lead (through the project's linked imports, if any) to one of
-    `_ANNOTATION_READERS`, or whose decorators are among `_ANNOTATION_READING_DECORATORS`.
+    Which classes have their annotations read at run time: ones `_syntactic_reader` or
+    `_reads_annotations` tells, and the ones whose bases or metaclass lead (through the project's
+    linked imports, if any) to one of `_ANNOTATION_READERS` or of those, or whose decorators are
+    among `_ANNOTATION_READING_DECORATORS`.
     """
 
     def __init__(self):
@@ -83,7 +108,7 @@ class _Readers:
         return result
 
     def _reads(self, module_ref: ModuleRef, node: ast.ClassDef) -> bool:
-        if _syntactic_reader(node):
+        if _syntactic_reader(node) or _reads_annotations(node):
             return True
 
         if ref(node).namespace is module_ref.ast and f"{module_ref.spec}.{node.name}" in _ANNOTATION_READERS:

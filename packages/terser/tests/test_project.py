@@ -479,3 +479,18 @@ def test_respect_all_keeps_what_other_modules_import(tmp_path):
     minify(root, output=out, config=TransformConfig(respect_all=True), entry={"main"})
     assert "os" not in read_tree(out)["pkg/__init__.py"]
     assert run_py("main.py", cwd=out).stdout == "3.3 h\n"
+
+
+def test_entry_tree_shaking_follows_native_extensions(tmp_path):
+    # numpy's `_multiarray_umath` imports `numpy._core._exceptions` from C: its name is in the binary
+    root = write_tree(tmp_path / "src", {
+        "main.py": "import pkg\n",
+        "pkg/__init__.py": "from . import _native\n",
+        "pkg/_errors.py": "class Error(Exception):\n    pass\n",
+        "pkg/_unused.py": "X = 1\n",
+    })
+    (root / "pkg" / "_native.cpython-314-x86_64-linux-gnu.so").write_bytes(b"\x7fELF\x00pkg._errors\x00PyInit__native\x00")
+    out = tmp_path / "out"
+    minify(root, output=out, entry={"main"})
+    assert set(read_tree(out)) >= {"main.py", "pkg/__init__.py", "pkg/_errors.py"}
+    assert "pkg/_unused.py" not in read_tree(out)

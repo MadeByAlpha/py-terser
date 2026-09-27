@@ -77,6 +77,20 @@ def import_bindings(module_ref: ModuleRef) -> list[ImportBinding]:
     return bindings
 
 
+def imported_paths(module_ref: ModuleRef) -> set[str]:
+    """Every dotted path the import statements of `module_ref` may import, in the project or not"""
+
+    paths = set()
+    for binding in module_ref.import_targets:
+        for alias in binding.aliases:
+            unresolved = alias_target(module_ref, alias).unresolved
+            paths.update(p for p in (unresolved.path, unresolved.submodule_path) if p is not None)
+    for found in module_ref.dynamic_imports:
+        if found.path is not None:
+            paths.add(found.path)
+    return paths
+
+
 def dependencies(module_ref: ModuleRef, project: dict[str, ModuleRef]) -> set[str]:
     """
     Every module `module_ref` depends on: each resolved import target, plus every submodule

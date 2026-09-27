@@ -55,6 +55,9 @@ def attributes(**overrides):
     # through a metaclass
     "from pydantic._internal._model_construction import ModelMetaclass\nclass A(metaclass=ModelMetaclass):\n    b: int",
     "import attrs\n@attrs.define\nclass A:\n    b: int",
+    # a base class reading its subclasses' annotations, like anyio's `TypedAttributeSet`
+    "class Base:\n    def __init_subclass__(cls):\n        assert getattr(cls, '__annotations__', {})\nclass A(Base):\n    b: int = 0",
+    "import typing\nclass Meta(type):\n    def __new__(mcs, *args):\n        cls = super().__new__(mcs, *args)\n        typing.get_type_hints(cls)\n        return cls\nclass A(metaclass=Meta):\n    b: int = 0",
 ])
 def test_annotation_readers_are_kept(source):
     assert_code(apply_transform(source, RemoveAnnotations, attributes()), source)
