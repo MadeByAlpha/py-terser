@@ -226,7 +226,7 @@ class LinkStep(PipelineStep[_Context]):
         with self._ctx.frozen.reporter.stage("Linking", self._ctx.modules_len) as stage:
             for module in stage.iter(self._ctx.modules):
                 linker.link(module, self._ctx.project)
-            transforms.mark_annotation_readers(self._ctx.project)
+            transforms.mark_classes(self._ctx.project)
             self._ctx.entry = await self.__resolve_entry(self._ctx.project)
 
         if self._ctx.frozen.config.rename_modules or self._ctx.frozen.config.rename_globals or self._ctx.entry:

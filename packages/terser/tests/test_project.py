@@ -441,3 +441,14 @@ def test_package_global_and_submodule_names_stay_apart(tmp_path):
     out = tmp_path / "out"
     minify(root, output=out, entry={"main"}, rename_globals=True, rename_modules=True)
     assert run_py("main.py", cwd=out).stdout == "v 1\n"
+
+
+def test_protocol_subclassed_in_another_module(tmp_path):
+    root = write_tree(tmp_path / "src", {
+        "main.py": "from handlers import Handler\nprint(Handler.__name__)\n",
+        "base.py": "from typing import Protocol\nclass Base(Protocol):\n    def __call__(self): ...\n",
+        "handlers.py": "from typing import Protocol, TypeVar\nfrom base import Base\nT = TypeVar('T')\nclass Handler(Base, Protocol[T]):\n    pass\n",
+    })
+    out = tmp_path / "out"
+    minify(root, output=out, config=TransformConfig(remove_typing_classes=True), entry={"main"})
+    assert run_py("main.py", cwd=out).stdout == "Handler\n"

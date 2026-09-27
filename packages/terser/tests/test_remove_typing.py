@@ -62,6 +62,11 @@ def test_remove_generics(source, expected):
         "from typing import Protocol, runtime_checkable\n@runtime_checkable\nclass A(Protocol):\n    pass",
     ),
     ("from typing import Protocol\nclass A(Protocol[T]):\n    pass", "from typing import Protocol\nclass A(Protocol[T]):\n    pass"),
+    # a protocol can only derive from protocols
+    (
+        "from typing import Protocol\nclass A(Protocol):\n    pass\nclass B(A, Protocol):\n    pass",
+        "from typing import Protocol\nclass A(Protocol):\n    pass\nclass B(A):\n    pass",
+    ),
 ])
 def test_remove_typing_classes(source, expected):
     assert_code(apply_transform(source, RemoveTypingClasses, only("remove_typing_classes")), expected)

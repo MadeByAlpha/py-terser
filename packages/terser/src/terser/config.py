@@ -135,9 +135,9 @@ class TransformConfig:
     """Remove bare (non-parametrized) `Generic` base classes"""
 
     remove_typing_classes: bool = False
-    """Remove bare `Protocol` base classes (unless `@typing.runtime_checkable`). Unsafe across module
-    boundaries: a stripped class loses Protocol semantics even where another module subclasses it
-    together with `Protocol[...]`, which raises `TypeError` at class-definition time."""
+    """Remove bare `Protocol` base classes (unless `@typing.runtime_checkable`, or another class
+    derives from it: a protocol can only derive from protocols). Subclasses in other modules are
+    only known in project mode."""
 
     convert_typing_constructors: bool = True
     """Convert simple `NamedTuple`/`TypedDict` class definitions to `namedtuple`/`dict` constructors"""

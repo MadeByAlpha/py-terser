@@ -149,7 +149,7 @@ multiple values, and can be repeated.
 | `--remove-typing-decorators`     | `True`  | Remove `@typing.override` and `@typing.final`                                  |
 | `--remove-overloads`             | `True`  | Remove `@typing.overload` stubs (also on with `--remove-typing-decorators`)   |
 | `--remove-generics`              | `True`  | Remove a bare `Generic` base, and unused type parameters of a class defined in a function |
-| `--remove-typing-classes`        | `False` | Remove a bare `Protocol` base (not under `@runtime_checkable`). Unsafe when another module subclasses the class |
+| `--remove-typing-classes`        | `False` | Remove a bare `Protocol` base (not under `@runtime_checkable`, nor of a class another class derives from: in project mode, across modules) |
 | `--convert-typing-constructors`  | `True`  | Field-only `NamedTuple` classes → `collections.namedtuple()`, and `TypedDict` classes only called with keywords (in a function) → `dict` |
 | `--convert-typing-extensions`    | `True`  | `from typing_extensions import X` → `from typing import X`, for names long in `typing` |
 | `--convert-dynamic-attribute-access` | `True` | `getattr(o, 'name')` → `o.name`, `setattr(o, 'name', v)` → `o.name = v`   |

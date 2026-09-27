@@ -4,11 +4,10 @@ import fnmatch
 from typing import override
 
 from terser.ast import ast, ref
-from terser.ast.ref import ref_or_none
 from terser.config import RemoveAnnotationOptions, TransformConfig
 from terser.utils.hints import is_hinted
 from terser.utils.imports import qualified_name
-from ..resolver.binding import BuiltinBinding, ImportBinding, UnresolvedBinding
+from ._classes import class_definition
 from ._suite import SuiteTransformer, TransformerFlag
 
 if __debug__ and __import__("typing").TYPE_CHECKING:
@@ -104,73 +103,8 @@ class _Readers:
         if qualified_name(node) in _ANNOTATION_READERS:
             return True
 
-        found = self._definition(module_ref, node)
+        found = class_definition(module_ref, node)
         return found is not None and self(*found)
-
-    def _definition(self, module_ref: ModuleRef, node: ast.expr) -> tuple[ModuleRef, ast.ClassDef] | None:
-        """Where the class `node` names is defined, as far as the project tells"""
-
-        if isinstance(node, ast.Attribute):
-            # `module.Class`, of an imported module
-            if (
-                isinstance(node.value, ast.Name) and (value_ref := ref_or_none(node.value)) is not None
-                and isinstance(binding := getattr(value_ref, 'binding', None), ImportBinding)
-                and binding.target is not None and binding.target_name is None
-            ):
-                return self._lookup(binding.target, node.attr, set())
-            return None
-
-        if not isinstance(node, ast.Name) or (node_ref := ref_or_none(node)) is None:
-            return None
-
-        binding = getattr(node_ref, 'binding', None)
-        if isinstance(binding, ImportBinding):
-            if binding.target is not None and binding.target_name is not None:
-                return self._lookup(binding.target, binding.target_name, set())
-            return None
-
-        if binding is None or isinstance(binding, (BuiltinBinding, UnresolvedBinding)):
-            return None
-        return _class_of(module_ref, binding)
-
-    def _lookup(self, module_ref: ModuleRef, name: str, seen: set[tuple[int, str]]) -> tuple[ModuleRef, ast.ClassDef] | None:
-        """The class `name` is in `module_ref`, following re-exports"""
-
-        if (id(module_ref), name) in seen:
-            return None
-        seen.add((id(module_ref), name))
-
-        for binding in module_ref.bindings:
-            if binding.name != name:
-                continue
-            if isinstance(binding, ImportBinding):
-                if binding.target is not None and binding.target_name is not None:
-                    return self._lookup(binding.target, binding.target_name, seen)
-                return None
-            return _class_of(module_ref, binding)
-        return None
-
-
-def _class_of(module_ref: ModuleRef, binding) -> tuple[ModuleRef, ast.ClassDef] | None:
-    """The class statement binding `binding`, if that is what binds it"""
-
-    classes = [node for node in binding.references if isinstance(node, ast.ClassDef)]
-    return (module_ref, classes[0]) if len(classes) == 1 else None
-
-
-def mark_annotation_readers(project: dict[str, ModuleRef]) -> None:
-    """
-    Tell `RemoveAnnotations` which classes of `project` have their annotations read, once it's
-    linked and before any module is transformed further: a class it looks into may be changed by
-    then (a `TypedDict` turned into `dict`, say).
-    """
-
-    readers = _Readers()
-    for module_ref in project.values():
-        for node in ast.walk(module_ref.ast):
-            if isinstance(node, ast.ClassDef):
-                ref(node).reads_annotations = readers(module_ref, node)
-
 
 class RemoveAnnotations(SuiteTransformer):
     """

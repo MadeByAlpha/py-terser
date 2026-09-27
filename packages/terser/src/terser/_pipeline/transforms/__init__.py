@@ -3,7 +3,8 @@ from .contracts import Contracts
 from .combine_imports import CombineImports
 from .constant_folding import FoldConstants
 from .fold_type_checking import FoldTypeChecking
-from .remove_annotations import RemoveAnnotations, mark_annotation_readers
+from ._classes import mark_classes
+from .remove_annotations import RemoveAnnotations
 from .remove_asserts import RemoveAsserts
 from .remove_dead_code import RemoveDeadCode
 from .remove_debug import RemoveDebug
@@ -56,7 +57,6 @@ __transforms__ = [
     RemoveOverloads,
     RemoveTypingDecorators,
     RemoveGenerics,
-    RemoveTypingClasses,
     ConvertTypingConstructors,
     ConvertDynamicAttributeAccess,
     FoldTypeChecking,
@@ -66,6 +66,7 @@ __transforms__ = [
 
     # FLAGS = REQUIRES_MODULE_RESOLVE
     RemoveAnnotations,
+    RemoveTypingClasses,
     RemoveExceptionBrackets,
 
     # FLAGS = INFLUENCES_MANGLING
@@ -73,4 +74,4 @@ __transforms__ = [
     RemoveAll,
 ]
 
-__all__ = ("TransformCache", "__transforms__", "mark_annotation_readers")
+__all__ = ("TransformCache", "__transforms__", "mark_classes")
