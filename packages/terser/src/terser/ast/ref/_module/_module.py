@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from typing import Final
 
     # noinspection protected-member
-    from terser._pipeline.resolver.binder import UnresolvedModuleRef
+    from terser._pipeline.resolver.binder import ImportTarget, UnresolvedModuleRef
     # noinspection protected-member
     from terser._pipeline.resolver.binding import ImportBinding
     # noinspection protected-member
@@ -33,6 +33,14 @@ class ModuleRef(ScopedNode[ast.Module]):
     """Every ImportBinding created while binding this module, mapped to its resolved path once
     `resolve_imports` has run (None until then)"""
 
+    import_aliases: dict[ast.alias, ImportTarget]
+    """What each alias of the `ImportBinding`s in `import_targets` imports, resolved by
+    `resolve_imports` and linked by `linker.link` (a binding may have more than one alias)"""
+
+    submodule_hops: dict[ast.Attribute, str]
+    """The attribute accesses reading a submodule off its package (`pkg.sub`) that renaming modules
+    renamed, to the submodule's old dotted path"""
+
     wildcard_targets: dict[ast.ImportFrom, UnresolvedModuleRef]
     """Every `from x import *` statement in this module, mapped to its resolved path once
     `resolve_imports` has run (None until then)"""
@@ -48,6 +56,8 @@ class ModuleRef(ScopedNode[ast.Module]):
         self.preserved = set()
         self.all = None
         self.import_targets = {}
+        self.import_aliases = {}
+        self.submodule_hops = {}
         self.wildcard_targets = {}
         self.dynamic_imports = []
         self.tainted = False

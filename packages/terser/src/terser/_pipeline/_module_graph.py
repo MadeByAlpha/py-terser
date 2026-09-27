@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from terser.ast import ast, ref
+from .resolver.binder import alias_target
 from .resolver.binding import ImportBinding
 
 if TYPE_CHECKING:
@@ -25,25 +26,34 @@ def __shadowed(package: ModuleRef, name: str, submodule: ModuleRef) -> bool:
     )
 
 
-def submodule_hops(node: ast.expr, target: ModuleRef, project: dict[str, ModuleRef]):
+def submodule_hops(node: ast.expr, target: ModuleRef, project: dict[str, ModuleRef], renamed: dict[ast.Attribute, str] | None = None):
     """
     (Attribute node, submodule dotted path) pairs for every submodule hop in an attribute chain
     reading off an imported package (`x.a.b.c`), hopping submodule by submodule until a hop
     resolves to an actual name instead of a further submodule (or the chain can't be resolved any
     further within the project). Shared by `tree_shake` (to mark the hopped-through submodules
-    reachable) and `mangler._modules` (to rename them if hopped-through).
+    reachable), `mangler._modules` (to rename them if hopped-through) and `mangler._globals` (to
+    find the name the chain ends at).
+
+    `mangler._modules` keeps every hop it renames in `ModuleRef.submodule_hops`, by the submodule's
+    old dotted path: given as `renamed`, the chain is still followed once the hops are renamed.
     """
 
+    renamed = renamed or {}
     hops = []
     current = target
     chain_node: ast.AST = node
     attr_node = ref(chain_node).parent
 
     while isinstance(attr_node, ast.Attribute) and attr_node.value is chain_node:
-        submodule_path = f"{current.spec}.{attr_node.attr}"
-        submodule = project.get(submodule_path)
-        if submodule is None or __shadowed(current, attr_node.attr, submodule):
-            break
+        if (submodule_path := renamed.get(attr_node)) is not None:
+            # a hop renaming modules already found, and renamed: its `attr` is the new name
+            submodule = project[submodule_path]
+        else:
+            submodule_path = f"{current.spec}.{attr_node.attr}"
+            submodule = project.get(submodule_path)
+            if submodule is None or __shadowed(current, attr_node.attr, submodule):
+                break
 
         hops.append((attr_node, submodule_path))
         current = submodule
@@ -77,6 +87,13 @@ def dependencies(module_ref: ModuleRef, project: dict[str, ModuleRef]) -> set[st
     """
 
     deps: set[str] = set()
+
+    # every statement importing a name, where more than one does (`try: from ._speedups import f`
+    # / `except ImportError: from ._native import f`)
+    for binding in module_ref.import_targets:
+        for alias in binding.aliases:
+            if (target := alias_target(module_ref, alias).target) is not None:
+                deps.add(str(target.spec))
 
     for binding in import_bindings(module_ref):
         if binding.target is None:

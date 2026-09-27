@@ -4,7 +4,10 @@ import fnmatch
 from typing import TYPE_CHECKING
 
 from terser.ast import ast, ref
+from terser.ast.ref._node import NodeRef
 from .._module_graph import import_bindings, submodule_hops
+from ..resolver import attach
+from ..resolver.binder import alias_target
 from .name_generator import name_filter
 
 if TYPE_CHECKING:
@@ -39,21 +42,55 @@ def __rename_import_alias(alias: ast.alias, new_dotted: dict[str, str]):
     old_root, new_root = old_text.split('.')[0], new_text.split('.')[0]
     alias.name = new_text
 
-    if alias.asname is None and new_root != old_root:
-        # `import a.b.c` (no `as`) binds the root segment (`a`) as the local name - adding
-        # `as a` here would instead bind the *leaf* module (`as` always targets the leaf on a
-        # dotted import), which is a different object. Keep the statement bare (so it still
-        # binds the new root under its own name) and re-point the old local name at it instead.
-        stmt = ref(alias).parent
-        new_stmt = ast.Assign(
-            targets=[ast.Name(id=old_root, ctx=ast.Store())],
-            value=ast.Name(id=new_root, ctx=ast.Load()),
-        )
-        for _, value in ast.iter_fields(ref(stmt).parent):
-            if not (isinstance(value, list) and stmt in value):
-                continue
-            value.insert(value.index(stmt) + 1, new_stmt)
-            return
+    if alias.asname is not None or new_root == old_root:
+        return
+
+    if '.' not in new_text:
+        # `import a` binds the module itself, so `as` keeps the name it's bound to
+        alias.asname = old_root
+        return
+
+    # `import a.b.c` (no `as`) binds the root segment (`a`) - `as` would bind the leaf instead, and
+    # the bare `import A.B.C` binds the new root `A`, a name nothing else in the namespace knows of
+    # (to be taken by another binding, before or after it). `a = __import__('A.B.C')` imports the
+    # same and binds `a` to the same root, binding no other name.
+    __import_root(alias, old_root, new_text)
+
+
+def __import_root(alias: ast.alias, name: str, dotted: str):
+    """Replace `alias` of its `import` statement with `name = __import__(dotted)`."""
+
+    stmt = ref(alias).parent
+    parent = ref(stmt).parent
+    namespace = ref(stmt).namespace
+    body = next(value for _, value in ast.iter_fields(parent) if isinstance(value, list) and stmt in value)
+
+    # `import a, b.c, d` imports in order: `import a` / `b = __import__('B.C')` / `import d`
+    index = stmt.names.index(alias)
+    before, after = stmt.names[:index], stmt.names[index + 1:]
+
+    assign = ast.Assign(
+        targets=[ast.Name(id=name, ctx=ast.Store())],
+        value=ast.Call(func=ast.Name(id='__import__', ctx=ast.Load()), args=[ast.Constant(value=dotted)], keywords=[]),
+    )
+    replacement: list[ast.stmt] = [assign]
+
+    if after:
+        rest = ast.Import(names=after)
+        NodeRef.new(rest, parent)
+        ref(rest).namespace = namespace
+        for other in after:
+            ref(other).parent = rest
+        replacement.append(rest)
+
+    position = body.index(stmt)
+    if before:
+        stmt.names = before
+        body[position + 1:position + 1] = replacement
+    else:
+        body[position:position + 1] = replacement
+
+    attach(assign, parent, namespace)
 
 
 def __rename_from_module(stmt: ast.ImportFrom, resolved_path: str | None, new_dotted: dict[str, str]):
@@ -108,6 +145,17 @@ def __rename_dynamic_import(found: DynamicImport, new_dotted: dict[str, str]):
 
     for entry, submodule in found.submodules.items():
         entry.value = new_dotted.get(str(submodule.spec), str(submodule.spec)).rsplit('.', 1)[-1]
+
+
+def __rename_hops(
+    module_ref: ModuleRef, node: ast.expr, target: ModuleRef, project: dict[str, ModuleRef], new_dotted: dict[str, str],
+):
+    """Rename the submodule hops of an attribute chain reading off `target` (`x.a.b.name`)."""
+
+    for attr_node, submodule_path in submodule_hops(node, target, project):
+        # for `submodule_hops` to follow the chain later on, by the old path
+        module_ref.submodule_hops[attr_node] = submodule_path
+        attr_node.attr = new_dotted[submodule_path].rsplit('.', 1)[-1]
 
 
 def mangle_modules(
@@ -171,22 +219,24 @@ def mangle_modules(
         new_dotted[dotted] = f"{new_parent}.{leaf}" if new_parent else leaf
 
     for module_ref in project.values():
-        for binding, unresolved in module_ref.import_targets.items():
-            node = binding.node
-            stmt = ref(node).parent
+        for binding in module_ref.import_targets:
+            for alias in binding.aliases:
+                linked = alias_target(module_ref, alias)
+                unresolved = linked.unresolved
+                stmt = ref(alias).parent
 
-            if isinstance(stmt, ast.ImportFrom):
-                __rename_from_module(stmt, unresolved.path, new_dotted)
+                if isinstance(stmt, ast.ImportFrom):
+                    __rename_from_module(stmt, unresolved.path, new_dotted)
 
-                if (
-                    unresolved.submodule_path is not None
-                    and binding.target is not None
-                    and str(binding.target.spec) == unresolved.submodule_path
-                ):
-                    __rename_submodule_alias(node, unresolved.submodule_path, new_dotted)
-            else:
-                assert isinstance(stmt, ast.Import)
-                __rename_import_alias(node, new_dotted)
+                    if (
+                        unresolved.submodule_path is not None
+                        and linked.target is not None
+                        and str(linked.target.spec) == unresolved.submodule_path
+                    ):
+                        __rename_submodule_alias(alias, unresolved.submodule_path, new_dotted)
+                else:
+                    assert isinstance(stmt, ast.Import)
+                    __rename_import_alias(alias, new_dotted)
 
         for stmt, unresolved in module_ref.wildcard_targets.items():
             __rename_from_module(stmt, unresolved.path, new_dotted)
@@ -199,19 +249,13 @@ def mangle_modules(
                 if not (isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)):
                     continue
 
-                for attr_node, submodule_path in submodule_hops(node, binding.target, project):
-                    new_path = new_dotted.get(submodule_path)
-                    if new_path is not None:
-                        attr_node.attr = new_path.rsplit('.', 1)[-1]
+                __rename_hops(module_ref, node, binding.target, project, new_dotted)
 
         for found in module_ref.dynamic_imports:
             __rename_dynamic_import(found, new_dotted)
 
             if found.returns is not None:
                 for root in found.roots:
-                    for attr_node, submodule_path in submodule_hops(root, found.returns, project):
-                        new_path = new_dotted.get(submodule_path)
-                        if new_path is not None:
-                            attr_node.attr = new_path.rsplit('.', 1)[-1]
+                    __rename_hops(module_ref, root, found.returns, project, new_dotted)
 
     return new_dotted

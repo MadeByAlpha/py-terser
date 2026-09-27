@@ -7,10 +7,7 @@ from typing import TYPE_CHECKING, ClassVar, final, override
 
 from alpha93.commons import typed
 from terser.ast import NodeVisitor, ast, ref
-from terser.ast.ref._node import NodeRef
-from ..parser._scope import ScopeResolver
-from ..resolver import bind_names, resolve_subtree
-from ..resolver.util import scope_ref_global
+from ..resolver import attach
 
 if TYPE_CHECKING:
     from typing import Final
@@ -285,12 +282,4 @@ class SuiteTransformer(NodeVisitor, ABC):
         if namespace is None:
             namespace = nearest_function_namespace(parent)
 
-        NodeRef.new(child, parent)._resolve_all()
-        ScopeResolver.child(child, namespace=namespace)
-
-        # Names have already been resolved/bound for the rest of the module by this point,
-        # so newly added nodes need the same treatment done incrementally instead of a full re-resolve.
-        resolve_subtree(child, scope_ref_global(namespace))
-        bind_names(child)
-
-        return child
+        return attach(child, parent, namespace)

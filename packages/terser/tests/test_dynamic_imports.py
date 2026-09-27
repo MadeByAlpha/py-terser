@@ -146,14 +146,12 @@ def test_reporters_write_warnings(reporter):
     assert "tool: warning: something\n" in out.getvalue()
 
 
-@pytest.mark.xfail(strict=True, reason="renaming modules then globals: `pkg.alpha.X` is looked up by the new `alpha`")
 def test_rename_modules_and_globals_attribute_chain(tmp_path):
     root = write_tree(tmp_path / "src", {"main.py": "import pkg.alpha\nprint(pkg.alpha.X)\n", **PACKAGE})
     minify(root, tmp_path / "out", rename_modules=True, rename_globals=True, preserve_modules={"main"})
     assert run_py("main.py", cwd=tmp_path / "out").stdout == "alpha\n"
 
 
-@pytest.mark.xfail(strict=True, reason="renaming globals doesn't know the names renaming modules binds (`import A.A`)")
 def test_rename_modules_and_globals_new_names(tmp_path):
     root = write_tree(tmp_path / "src", {
         "main.py": 'import pkg.alpha\nprint(pkg.__name__ is not None)\nprint(len("x"))\n', **PACKAGE,
