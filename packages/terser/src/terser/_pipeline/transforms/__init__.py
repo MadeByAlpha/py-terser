@@ -28,7 +28,6 @@ from .remove_generics import RemoveGenerics
 from .remove_typing_classes import RemoveTypingClasses
 from .convert_typing_constructors import ConvertTypingConstructors
 from .convert_dynamic_attribute_access import ConvertDynamicAttributeAccess
-from .remove_dead_blocks import RemoveDeadBlocks
 from .remove_all import RemoveAll
 from .apply_constant_decorator import ApplyConstantDecorator
 
@@ -65,7 +64,6 @@ __transforms__ = [
     FoldTypeChecking,
     FoldConstants,
     RemoveDeadCode,
-    RemoveDeadBlocks,
 
     # FLAGS = REQUIRES_MODULE_RESOLVE
     RemoveExceptionBrackets,

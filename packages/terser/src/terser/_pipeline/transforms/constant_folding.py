@@ -30,9 +30,6 @@ def _is_unshadowed_builtin(node, name: str) -> bool:
     return isinstance(binding, BuiltinBinding) and binding.name == name and not binding.is_redefined()
 
 
-_TYPE_CHECKING_NAMES = ('typing.TYPE_CHECKING', 'typing_extensions.TYPE_CHECKING')
-
-
 def is_provably_bool(node) -> bool:
     """
     Check if a node's value is guaranteed to be a bool, syntactically.
@@ -289,28 +286,15 @@ class FoldConstants(SuiteTransformer):
 
     def visit_Name(self, node):
         if not isinstance(node.ctx, ast.Load):
-            # a Store/Del context is the binding's own definition site, not a usage to
-            # fold - e.g. the `x` in `x = __import__("typing").TYPE_CHECKING` itself
+            # a Store/Del context is the binding's own definition site, not a usage to fold
             return node
 
-        if node.id == '__debug__' and _is_unshadowed_builtin(node, '__debug__'):
-            new_node = ast.NameConstant(value=self._config.optimize < 1)
-        elif qualified_name(node) in _TYPE_CHECKING_NAMES:
-            # False at runtime - only ever True for static type checkers
-            new_node = ast.NameConstant(value=False)
-        else:
+        # `optimize` is the level the code is compiled with: unknown by default (-1), where
+        # `__debug__` is left for the interpreter running it to decide
+        if node.id != '__debug__' or self._config.optimize < 0 or not _is_unshadowed_builtin(node, '__debug__'):
             return node
 
-        node_ref = ref(node)
-        return self.add_child(new_node, node_ref.parent, node_ref.namespace)
-
-    def visit_Attribute(self, node):
-        node.value = self.visit(node.value)
-
-        if qualified_name(node) not in _TYPE_CHECKING_NAMES:
-            return node
-
-        new_node = ast.NameConstant(value=False)
+        new_node = ast.NameConstant(value=self._config.optimize == 0)
         node_ref = ref(node)
         return self.add_child(new_node, node_ref.parent, node_ref.namespace)
 
