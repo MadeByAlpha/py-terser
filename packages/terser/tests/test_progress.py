@@ -3,11 +3,9 @@ import re
 import sys
 import threading
 import time
-from functools import partial
 
-import anyio
 import pytest
-from helpers import RecordingReporter, write_tree
+from helpers import RecordingReporter, minify_project, write_tree
 
 from alpha93.progression import (
     LogReporter,
@@ -16,7 +14,6 @@ from alpha93.progression import (
     auto_reporter,
     in_ci,
 )
-from terser import TransformConfig, minify_project
 from terser.project import ProjectMinifier
 
 PROJECT = {
@@ -29,24 +26,22 @@ PROJECT = {
 def test_project_reports_every_stage(tmp_path):
     root = write_tree(tmp_path / "src", PROJECT)
     reporter = RecordingReporter()
-    anyio.run(partial(minify_project, TransformConfig(), {str(root)}, reporter, anyio.Path(tmp_path / "out")))
+    minify_project(root, tmp_path / "out", reporter)
 
     assert reporter.planned == ProjectMinifier.STAGES == len(reporter.stages)
     assert [stage.name for stage in reporter.stages] == [
-        "Resolving paths",
         "Compiling modules",
         "Linking",
-        "Tree-shaking",
-        "Mangling modules",
         "Applying transforms",
         "Mangling globals",
-        "Applying transforms after mangling",
+        "Mangling modules",
+        "Finalizing",
         "Writing output",
     ]
     assert all(stage.completed for stage in reporter.stages)
 
     counted = {stage.name: stage for stage in reporter.stages if stage.total is not None}
-    for name in ("Compiling modules", "Linking", "Applying transforms after mangling", "Writing output"):
+    for name in ("Compiling modules", "Linking", "Finalizing", "Writing output"):
         assert counted[name].done == counted[name].total == len(PROJECT)
 
     # stops once a pass changes nothing, well before `passes` passes
@@ -63,7 +58,7 @@ def test_project_does_not_close_reporter(tmp_path):
 
     root = write_tree(tmp_path / "src", PROJECT)
     reporter = Closing()
-    anyio.run(partial(minify_project, TransformConfig(), {str(root)}, reporter, anyio.Path(tmp_path / "out")))
+    minify_project(root, tmp_path / "out", reporter)
     assert not reporter.closed
 
 
@@ -109,13 +104,14 @@ def _drawn(out, pattern):
     return any(re.match(pattern, line) for line in _lines(out))
 
 
-def test_stage_item_counts_when_done():
+def test_stage_item_counts_even_when_failed():
     stage = RecordingReporter().stage("Items", 2)
     with stage.item("a"):
         pass
-    with pytest.raises(ValueError), stage.item("b"):
+    with pytest.raises(RuntimeError, match="^Items failed while processing b$") as info, stage.item("b"):
         raise ValueError
-    assert stage.done == 1
+    assert isinstance(info.value.__cause__, ValueError)
+    assert stage.done == 2
 
 
 def test_tqdm_draws_at_once_on_terminal(terminal):
@@ -162,7 +158,7 @@ def test_tqdm_stage_finished_early_is_complete():
 
 def test_tqdm_failed_stage_stays_where_it_stopped():
     out = io.StringIO()
-    with pytest.raises(ValueError), TqdmReporter(file=out) as reporter, reporter.stage("Failing", 4) as stage:
+    with pytest.raises(RuntimeError), TqdmReporter(file=out) as reporter, reporter.stage("Failing", 4) as stage:
         stage.advance()
         raise ValueError
 
@@ -274,7 +270,7 @@ def _verbose_lines(run):
     reporter = LogReporter("tool: ", file=out, verbose=True)
     try:
         run(reporter)
-    except ValueError:
+    except RuntimeError:
         pass
     # durations vary: keep the lines up to them
     return [line.rsplit(" [", 1)[0].rsplit(" in ", 1)[0].rsplit(" after ", 1)[0] for line in out.getvalue().splitlines()]
@@ -363,7 +359,7 @@ def test_tqdm_terminal_shows_run_and_stage(terminal):
 
 
 def test_tqdm_terminal_failed_run_stays_where_it_stopped(terminal):
-    with pytest.raises(ValueError), TqdmReporter(file=terminal) as reporter:
+    with pytest.raises(RuntimeError), TqdmReporter(file=terminal) as reporter:
         reporter.plan(4)
         with reporter.stage("Done"):
             pass
@@ -405,6 +401,5 @@ def test_workers_bound_threads(tmp_path, monkeypatch, workers):
         real_start(self)
 
     monkeypatch.setattr(threading.Thread, "start", start)
-    anyio.run(partial(minify_project, TransformConfig(), {str(root)}, None, anyio.Path(tmp_path / "out"),
-                      workers=workers))
+    minify_project(root, tmp_path / "out", workers=workers)
     assert 1 <= len(started) <= workers

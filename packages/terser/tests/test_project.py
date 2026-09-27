@@ -1,10 +1,7 @@
-from functools import partial
 
-import anyio
 import pytest
 
-from helpers import read_tree, run_py, write_tree
-from terser import TransformConfig, minify_project
+from helpers import minify_project, read_tree, run_py, write_tree
 
 APP = {
     "main.py": """\
@@ -58,13 +55,7 @@ def app(tmp_path):
 
 
 def minify(*paths, output=None, config=None, **kwargs):
-    anyio.run(partial(
-        minify_project,
-        config or TransformConfig(),
-        {str(p) for p in paths},
-        output=anyio.Path(output) if output else None,
-        **kwargs,
-    ))
+    minify_project(paths, output, None, config, **kwargs)
 
 
 def total_size(tree: dict[str, str]) -> int:

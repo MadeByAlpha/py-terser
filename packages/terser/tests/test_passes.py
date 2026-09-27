@@ -1,10 +1,8 @@
 import itertools
-from functools import partial
 
-import anyio
 
-from helpers import write_tree
-from terser import TransformConfig, minify, minify_project
+from helpers import minify_project, write_tree
+from terser import TransformConfig, minify
 from terser._pipeline import mangler, parser, transforms
 from terser._pipeline.transforms._suite import (
     SuiteTransformer,
@@ -122,5 +120,5 @@ def test_project_transforms_every_module(monkeypatch, tmp_path):
     spy("mangle_globals", mangler.mangle_globals)
     monkeypatch.setattr(transforms, "__transforms__", [Spy])
     root = write_tree(tmp_path / "app", {"a.py": "import b\nx = 1", "b.py": "y = 2", "c.py": "z = 3"})
-    anyio.run(partial(minify_project, TransformConfig(), {str(root)}, output=anyio.Path(tmp_path / "out")))
+    minify_project(root, tmp_path / "out")
     assert {module for name, module in seen if name == "mangle_modules"} == {"a", "b", "c"}

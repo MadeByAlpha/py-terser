@@ -4,7 +4,10 @@ import os
 import subprocess
 import sys
 import threading
+from functools import partial
 from pathlib import Path
+
+import anyio
 
 import terser
 from alpha93.progression import Reporter, Stage
@@ -12,7 +15,7 @@ from terser._minify import unparse
 from terser._pipeline import parser, resolver
 from terser.ast import CompareError, compare_ast
 from terser.ast.ref._module._spec import SingleFileModuleSpec
-from terser.config import TransformConfig
+from terser.config import Config, TransformConfig
 from terser.exceptions import UnbeneficialMinificationError
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -76,6 +79,22 @@ def minify_src(source: str, config: TransformConfig | None = None, path: str = "
         return terser.minify(source, config or TransformConfig(), path, **kwargs)
     except UnbeneficialMinificationError:
         return source
+
+
+def minify_project(paths, output=None, reporter=None, config: TransformConfig | None = None, /, **options):
+    """`terser.minify_project` over `paths` (a path or several), with `options` as the rest of its `Config`."""
+
+    paths = [paths] if isinstance(paths, (str, os.PathLike)) else paths
+    return anyio.run(partial(
+        terser.minify_project,
+        {str(path) for path in paths},
+        Config(
+            output_path=anyio.Path(output) if output else None,
+            transform=config or TransformConfig(),
+            **options,
+        ),
+        reporter,
+    ))
 
 
 def run_py(*args: str | os.PathLike, cwd: str | os.PathLike | None = None, stdin: str | None = None,

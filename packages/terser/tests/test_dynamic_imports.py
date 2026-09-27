@@ -2,14 +2,12 @@ import builtins
 import io
 import re
 import warnings
-from functools import partial
 
-import anyio
 import pytest
-from helpers import read_tree, run_py, write_tree
+from helpers import minify_project, read_tree, run_py, write_tree
 
 from alpha93.progression import LogReporter, TqdmReporter
-from terser import TransformConfig, minify_project
+from terser import TransformConfig
 from terser._minify import minify as minify_module
 from terser._pipeline.dynamic_imports import Callee
 from terser.ast import ref
@@ -32,7 +30,7 @@ EXPECTED = "alpha beta gamma delta beta\n"
 
 
 def minify(root, out, **options):
-    anyio.run(partial(minify_project, TransformConfig(), {str(root)}, None, anyio.Path(out), **options))
+    minify_project(root, out, **options)
     return read_tree(out)
 
 

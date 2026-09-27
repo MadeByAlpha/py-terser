@@ -1,8 +1,7 @@
-import anyio
 import pytest
 
-from helpers import LAZY_PACKAGE, apply_transform, assert_code, minify_src, only, run_py, write_tree
-from terser import TransformConfig, minify_project
+from helpers import LAZY_PACKAGE, apply_transform, assert_code, minify_project, minify_src, only, run_py, write_tree
+from terser import TransformConfig
 from terser._pipeline.transforms import FoldTypeChecking
 
 
@@ -87,9 +86,7 @@ def test_preserve_type_checking():
 def test_preserve_type_checking_in_project(tmp_path, patterns, expected):
     root = write_tree(tmp_path / "src", LAZY_PACKAGE)
     out = tmp_path / "out"
-    anyio.run(lambda: minify_project(
-        TransformConfig(), {str(root)}, output=anyio.Path(out), preserve_type_checking=patterns,
-    ))
+    minify_project(root, out, preserve_type_checking=patterns)
 
     result = run_py("-c", "import pkg; print(pkg.LAZY)", env={"PYTHONPATH": str(out)}, check=False)
     assert expected in result.stdout + result.stderr

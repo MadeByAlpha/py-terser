@@ -188,22 +188,18 @@ class TerserBuildHook(BuildHookInterface):
 
         config = Config(
             output_path=anyio.Path(out_dir),
-            defines=self.config.pop("defines", {}),
-            workers=self.config.pop("workers", None),
-            strict=self.config.pop("strict", False),
+            defines=self.config.get("defines", {}),
+            strict=self.config.get("strict", False),
             transform=TransformConfig(**config_opts),
-            rename_locals=self.config.pop("rename_locals", True),
-            preserve_locals=self.config.pop("preserve_locals", {}),
-            rename_globals=self.config.pop("rename_globals", False),
-            preserve_globals=self.config.pop("preserve_globals", {}),
-            rename_modules=self.config.pop("rename_modules", False),
-            preserve_modules=set(self.config.pop("preserve_modules", [])),
-            preserve_shebang=self.config.pop("preserve_shebang", True),
-            preserve_type_checking=set(self.config.pop("preserve_type_checking", [])),
-            hoist_literals=self.config.pop("hoist_literals", True),
-            rename_star_args=self.config.pop("rename_star_args", True),
-            prefer_single_line=self.config.pop("prefer_single_line", True),
-            entry=set(self.config.pop("entry", [])),
+            rename_locals=self.config.get("rename_locals", True),
+            preserve_locals=self.config.get("preserve_locals") or {},
+            rename_globals=self.config.get("rename_globals", False),
+            preserve_globals=self.config.get("preserve_globals") or {},
+            preserve_shebang=self.config.get("preserve_shebang", True),
+            hoist_literals=self.config.get("hoist_literals", True),
+            rename_star_args=self._option("rename_star_args", lambda v: type(v) is bool, "a boolean", True),
+            prefer_single_line=self.config.get("prefer_single_line", True),
+            **options,
         )
 
         return asyncio.run(minify_project(roots, config, reporter))

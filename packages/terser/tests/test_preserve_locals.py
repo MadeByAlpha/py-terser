@@ -1,11 +1,10 @@
 import re
 
-import anyio
 import pytest
-from helpers import read_tree, write_tree
+from helpers import minify_project, read_tree, write_tree
 
 import terser
-from terser import TransformConfig, minify_project
+from terser import TransformConfig
 from terser._pipeline.mangler.util import preserved_names
 
 SOURCE = """\
@@ -89,6 +88,6 @@ def test_preserved_names_with_qualname():
 def test_project(tmp_path, options, expected):
     root = write_tree(tmp_path / "src", {"pkg/__init__.py": "", "pkg/mod.py": SOURCE})
     out = tmp_path / "out"
-    anyio.run(lambda: minify_project(TransformConfig(), {str(root)}, output=anyio.Path(out), **options))
+    minify_project(root, out, **options)
 
     assert _names(read_tree(out)["pkg/mod.py"]) == expected

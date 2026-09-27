@@ -94,6 +94,7 @@ def main(argv: list[str] | None = None):
             Config(
                 output_path=__import__("anyio").Path(output) if (output := args.output_options.output) else None,
                 workers=args.workers,
+                transform=args.transform_options,
                 hoist_literals=args.mangling_options.hoist_literals,
                 rename_locals=args.mangling_options.rename_locals,
                 preserve_locals=parse_preserve(args.mangling_options.preserve_locals),

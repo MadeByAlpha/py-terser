@@ -69,6 +69,7 @@ def minify(
         Config(
             defines=defines or {},
             strict=strict,
+            transform=config,
             preserve_shebang=preserve_shebang,
             prefer_single_line=prefer_single_line,
             hoist_literals=hoist_literals,

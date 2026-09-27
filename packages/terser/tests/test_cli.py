@@ -132,8 +132,11 @@ def test_error_in_project(tmp_path):
     project = write_tree(tmp_path / "project", {"good.py": "x = 1\n", "bad.py": "def f(:\n"})
     result = run_terser(project, "--output", tmp_path / "out", check=False)
     assert result.returncode == 1
-    # the worker's error itself, not an exception group, and no noise from progress bars at shutdown
-    assert result.stderr.rstrip().endswith("SyntaxError: invalid syntax")
+    # the worker's error, then the stage it failed in, not an exception group, and no noise from
+    # progress bars at shutdown
+    assert result.stderr.rstrip().endswith("RuntimeError: Compiling modules failed")
+    assert "SyntaxError: invalid syntax" in result.stderr
+    assert "RuntimeError: Compiling modules failed while processing bad" in result.stderr
     assert "bad.py" in result.stderr
     assert "Exception Group" not in result.stderr
     assert "Exception ignored" not in result.stderr

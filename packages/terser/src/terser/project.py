@@ -4,7 +4,7 @@ import fnmatch
 import os
 import shutil
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, override
 
 import anyio
@@ -106,7 +106,7 @@ class ProjectMinifier(Pipeline[_Context]):
         # directory's name is up to the caller)
         output_package = paths.single_package_root
         if output_package is not None:
-            config = Config(**{"preserve_modules": config.preserve_modules | {output_package}, **config.__dict__})  # type: ignore[call-arg,ty:invalid-argument-type]
+            config = replace(config, preserve_modules=config.preserve_modules | {output_package})
 
         limiter = CapacityLimiter(
             total_tokens=config.workers or int((getattr(os, "process_cpu_count", os.cpu_count)() or 1) * 1.6)
@@ -270,7 +270,6 @@ class TransformStep(PipelineStep[_Context]):
         self._ctx.modules_len = len(self._ctx.modules)
 
     def _prepare_cache(self):
-        self.__tree_shake()
         self.__caches = [transforms.TransformCache(self._ctx.frozen.config.transform) for _ in self._ctx.modules]
 
     def _transform(self, i: int, stage: Stage, separated: bool, flags: int, /) -> Any:
@@ -283,6 +282,7 @@ class TransformStep(PipelineStep[_Context]):
 
     @override
     async def __call__(self, /) -> None:
+        self.__tree_shake()
         self._prepare_cache()
         total = self._ctx.frozen.config.transform.passes * self._ctx.modules_len
         with self._ctx.frozen.reporter.stage("Applying transforms", total) as stage:
@@ -303,7 +303,7 @@ class FinalizationStep(TransformStep):
 
         async def __worker(i: int, stage: Stage, /):
             # one thread per module, for finalizing it
-            await to_thread.run_sync(self._transform, i, stage, True, 4)
+            await to_thread.run_sync(self._transform, i, stage, True, 4, limiter=self._ctx.frozen.limiter)
 
         with self._ctx.frozen.reporter.stage("Finalizing", self._ctx.modules_len) as p:
             async with _task_group() as tg:
@@ -335,12 +335,12 @@ class PrintStep(PipelineStep[_Context]):
             self._ctx.frozen.config.output_path / _module_output_path(spec, self._ctx.new_dotted, self._ctx.frozen.output_package is not None)
 
         _write(dest, unparse(str(spec.path), None, node, self._ctx.frozen.config.prefer_single_line))
-        self.__outputs[str(spec.path)] = str(dest)
+        self._ctx.outputs[str(spec.path)] = str(dest)
 
     def binary(self, ffi_spec: _spec.FfiModuleSpec, /):
         if self._ctx.frozen.config.output_path is None:
             # in-place: the FFI file is already where it should be
-            self.__outputs[str(ffi_spec.path)] = str(ffi_spec.path)
+            self._ctx.outputs[str(ffi_spec.path)] = str(ffi_spec.path)
             return
 
         parent, _, _ = str(ffi_spec).rpartition('.')
@@ -356,11 +356,11 @@ class PrintStep(PipelineStep[_Context]):
 
         os.makedirs(dest.parent, exist_ok=True)
         shutil.copy2(ffi_spec.path, dest)
-        self.__outputs[str(ffi_spec.path)] = str(dest)
+        self._ctx.outputs[str(ffi_spec.path)] = str(dest)
 
     @override
     async def __call__(self, /) -> None:
-        self.__outputs: dict[str, str | None] = dict.fromkeys(
+        self._ctx.outputs = dict.fromkeys(
             str(spec.path) for spec in (*self._ctx.frozen.module_specs, *self._ctx.frozen.ffi_specs)
         )
 

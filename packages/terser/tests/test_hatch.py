@@ -247,7 +247,7 @@ def test_rollup_plans_every_stage(tmp_path, monkeypatch):
     monkeypatch.setattr(terser.hatch, "auto_reporter", lambda *args, **kwargs: reporter)
     _build_rollup(tmp_path)
 
-    assert reporter.planned == len(reporter.stages) == 11
+    assert reporter.planned == len(reporter.stages) == 9
     assert reporter.stages[0].name == "Extracting wheel"
     assert reporter.stages[-1].name == "Rewriting wheel"
 
@@ -259,10 +259,10 @@ def _capture_workers(monkeypatch):
     seen = []
     real_init = ProjectMinifier.__init__
 
-    def init(self, *args, **kwargs):
-        real_init(self, *args, **kwargs)
+    def init(self, paths, config, *args):
+        real_init(self, paths, config, *args)
         # the limiter decides how many modules are compiled at once
-        seen.append((kwargs.get("workers"), self._ProjectMinifier__limiter.total_tokens))
+        seen.append((config.workers, self._ctx.frozen.limiter.total_tokens))
 
     monkeypatch.setattr(ProjectMinifier, "__init__", init)
     monkeypatch.setattr(terser.hatch, "auto_reporter", lambda *args, **kwargs: RecordingReporter())
