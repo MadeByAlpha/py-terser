@@ -2,6 +2,7 @@ import pytest
 
 from helpers import apply_transform, assert_code, only
 from terser._pipeline.transforms import CleanupLocalImports
+from terser.ast import ref
 
 
 @pytest.mark.parametrize("source,expected", [
@@ -23,3 +24,14 @@ def test_cleanup_local_imports(source, expected):
 def test_respect_all(source, expected):
     config = only("cleanup_local_imports", "respect_all")
     assert_code(apply_transform(source, CleanupLocalImports, config), expected)
+
+
+def test_removed_import_is_forgotten():
+    # a binding left behind still referenced the removed alias: once `ConvertToLambda` moved it
+    # into the lambda the function became, local renaming never found the alias in it, and hung
+    module = apply_transform(
+        "def f():\n    from os import path\n    return 1", CleanupLocalImports, only("cleanup_local_imports")
+    )
+    assert_code(module, "def f():\n    return 1")
+    function = module.body[0]
+    assert [binding.name for binding in ref(function).bindings] == []

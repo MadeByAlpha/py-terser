@@ -2,6 +2,7 @@ from typing import override
 
 from terser.ast import ast, ref
 from terser.config import TransformConfig
+from ..resolver import forget
 from ..resolver.binding import ImportBinding
 from ._suite import SuiteTransformer, TransformerFlag
 
@@ -52,6 +53,9 @@ class CleanupLocalImports(SuiteTransformer):
         for stmt in node_list:
             if isinstance(stmt, (ast.Import, ast.ImportFrom)):
                 kept = self._clean_alias_list(stmt, in_module_scope=ref(stmt).namespace is self._module)
+                # or the bindings keep the aliases as references, which e.g. `ConvertToLambda` then
+                # moves with them into a lambda the aliases are not in
+                forget([alias for alias in stmt.names if not any(alias is k for k in kept)])
                 if not kept:
                     continue
                 stmt.names = kept
