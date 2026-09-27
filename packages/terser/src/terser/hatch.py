@@ -19,7 +19,7 @@ from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 from alpha93.progression import NullReporter, Reporter, auto_reporter
 
 from ._pipeline.path_provider import SUFFIXES
-from .config import RemoveAnnotationOptions, TransformConfig, Config
+from .config import RemoveAnnotationOptions, RemoveDocstringOptions, TransformConfig, Config
 from .project import ProjectMinifier
 from .terser import minify_project
 
@@ -185,6 +185,10 @@ class TerserBuildHook(BuildHookInterface):
         config_opts = dict(self.config.get("config", {}))
         if isinstance(remove_annotations := config_opts.get("remove_annotations"), dict):
             config_opts["remove_annotations"] = RemoveAnnotationOptions(**remove_annotations)
+        if isinstance(remove_docstrings := config_opts.get("remove_docstrings"), dict):
+            config_opts["remove_docstrings"] = RemoveDocstringOptions(**remove_docstrings)
+        if isinstance(target_version := config_opts.get("target_version"), list):
+            config_opts["target_version"] = tuple(target_version)
 
         config = Config(
             output_path=anyio.Path(out_dir),

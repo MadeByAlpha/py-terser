@@ -116,9 +116,9 @@ multiple values, and can be repeated.
 | `--optimize {-1,0,1,2}`          | `-1`    | Passed to `ast.parse()`. `2` also enables `--remove-debug` and `--remove-asserts` |
 | `--apply-contracts`              | `True`  | Rewrite calls according to `--contracts`. See [Contracts](#contracts)         |
 | `--contracts RULE`               | see below | Contract rules to apply                                                     |
-| `--remove-literal-statements`    | `False` | Remove statements that are a single literal (e.g. docstrings)                 |
+| `--remove-literal-statements`    | `False` | Remove statements that are a single literal, except docstrings (see `--remove-docstrings`) |
 | `--combine-imports`              | `True`  | Combine adjacent import statements                                            |
-| `--remove-annotations`           | `True`  | Remove type annotations, as selected by the four options below               |
+| `--remove-annotations`           | `True`  | Remove type annotations, as selected by the four options below (not `Annotated[...]`, nor under `@terser_hints.preserve_annotations`) |
 | `--remove-variable-annotations`  | `True`  | Remove variable annotations                                                   |
 | `--remove-return-annotations`    | `True`  | Remove return annotations                                                     |
 | `--remove-argument-annotations`  | `True`  | Remove argument annotations                                                   |
@@ -133,6 +133,27 @@ multiple values, and can be repeated.
 | `--convert-pass`                 | `True`  | Remove `pass`, or replace it with the shortest literal statement (`0`)        |
 | `--remove-empty-exc-brackets`    | `True`  | `raise ValueError()` → `raise ValueError` for built-in exceptions (not in modules using `exec()`, an external `import *`, …) |
 | `--convert-posargs`              | `True`  | Convert positional-only arguments to normal arguments (not for functions taking `**kwargs`) |
+| `--hint-modules MODULE`          | —       | Modules whose members are recognized like `terser_hints`' (`preserve_docstring`, `preserve_annotations`, `constant`) |
+| `--target-version MAJOR MINOR…`  | —       | Python version the output runs under: `sys.version_info` comparisons it decides are folded (`3 12` is any 3.12.x) |
+| `--unfold-iife-lambdas`          | `True`  | `(lambda: x)()` → `x`, and `@lambda _: _()` / `@terser_hints.constant` → a call rebinding the function's name |
+| `--remove-type-statements`       | `False` | Remove `type X = ...` statements. Unsafe when another module imports the alias |
+| `--convert-early-exits`          | `True`  | `if c: return a` followed by `return b` → `return a if c else b`               |
+| `--convert-to-inline`            | `True`  | `if c: f()` → `c and f()`, `if c: f()` / `else: g()` → `f() if c else g()`     |
+| `--convert-to-lambda`            | `True`  | `def f(x): return e` → `f = lambda x: e` (not for decorated or annotated functions, or ones `--preserve-locals` names) |
+| `--remove-dummy-assignments`     | `True`  | Remove `x = x` where `x` is bound elsewhere too, outside a class body         |
+| `--remove-docstrings`            | `False` | Remove docstrings, except under `@terser_hints.preserve_docstring`, and ones that may be read (`__doc__`) |
+| `--also-modules`                 | `False` | With `--remove-docstrings`, remove module docstrings too                      |
+| `--cleanup-local-imports`        | `True`  | Remove unused imports in functions and classes                                |
+| `--respect-all`                  | `False` | With `--cleanup-local-imports`, remove unused module-level imports not in `__all__` too |
+| `--remove-typing-decorators`     | `True`  | Remove `@typing.override` and `@typing.final`                                  |
+| `--remove-overloads`             | `True`  | Remove `@typing.overload` stubs (also on with `--remove-typing-decorators`)   |
+| `--remove-generics`              | `True`  | Remove a bare `Generic` base, and unused type parameters of a class defined in a function |
+| `--remove-typing-classes`        | `False` | Remove a bare `Protocol` base (not under `@runtime_checkable`). Unsafe when another module subclasses the class |
+| `--convert-typing-constructors`  | `True`  | Field-only `NamedTuple` classes → `collections.namedtuple()`, and `TypedDict` classes only called with keywords (in a function) → `dict` |
+| `--convert-typing-extensions`    | `True`  | `from typing_extensions import X` → `from typing import X`, for names long in `typing` |
+| `--convert-dynamic-attribute-access` | `True` | `getattr(o, 'name')` → `o.name`, `setattr(o, 'name', v)` → `o.name = v`   |
+| `--remove-dunder-all`            | `False` | Remove the module-level `__all__`. Unsafe when another module does `import *` from it |
+| `--remove-dunder-all-modules PATTERN` | — | Glob patterns over dotted module paths where `__all__` is removed          |
 
 #### Mangling
 
@@ -249,7 +270,7 @@ Supported keys:
     them are left out of the wheel. The modules the scripts and entry points refer to count as entries too. An entry
     that is not a module of the build is an error.
 - `config` table: every `TransformConfig` field (see [Python API](#python-api)). `remove_annotations` also takes a
-  table of the four `remove_*_annotations` options.
+  table of the four `remove_*_annotations` options, and `remove_docstrings` a table with `also_modules`.
 
 The hook shows its progress on stderr; `hatch build -q` (or `HATCH_QUIET=1`) turns it off. On a terminal, the top bar
 shows the whole build (every stage counted alike), the one below the current stage, and the line below them the modules
