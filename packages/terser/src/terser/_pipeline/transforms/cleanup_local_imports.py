@@ -102,16 +102,17 @@ class CleanupLocalImports(SuiteTransformer):
     def _clean_future(self, stmt: ast.ImportFrom):
         """
         A `__future__` import changes how the module compiles, whether its name is read or not:
-        `annotations` keeps the annotations left in the module unevaluated (code reading them at run
-        time, like pydantic's, would otherwise evaluate names only imported under `TYPE_CHECKING`),
-        `barry_as_FLUFL` changes the grammar, and the others are how Python 3 always behaves.
+        `barry_as_FLUFL` changes the grammar, and is kept. `annotations` keeps the annotations left
+        in the module unevaluated, and is kept with `config.keep_future_annotations` while some are
+        left. The others are how Python 3 always behaves.
         """
 
         if not self._config.respect_all:
             return stmt.names
         return [
             alias for alias in stmt.names
-            if alias.name == 'barry_as_FLUFL' or alias.name == 'annotations' and self._annotated
+            if alias.name == 'barry_as_FLUFL'
+            or alias.name == 'annotations' and self._config.keep_future_annotations and self._annotated
         ]
 
     @override

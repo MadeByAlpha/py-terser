@@ -146,6 +146,7 @@ multiple values, and can be repeated.
 | `--also-modules`                 | `False` | With `--remove-docstrings`, remove module docstrings too                      |
 | `--cleanup-local-imports`        | `True`  | Remove the imports in functions and classes other transforms left unused (an import nothing read in the first place is kept, for what importing does) |
 | `--respect-all`                  | `False` | With `--cleanup-local-imports`, remove the module-level imports left unused too, when not in `__all__` (nor, in project mode, imported by other modules, or named by a string) |
+| `--keep-future-annotations`      | `False` | With `--respect-all`, keep `from __future__ import annotations` while annotations are left in the module, for code reading them at run time (a name only imported under `TYPE_CHECKING` raises `NameError` once they are evaluated) |
 | `--remove-typing-decorators`     | `True`  | Remove `@typing.override` and `@typing.final`                                  |
 | `--remove-overloads`             | `True`  | Remove `@typing.overload` stubs (also on with `--remove-typing-decorators`)   |
 | `--remove-generics`              | `True`  | Remove a bare `Generic` base, and unused type parameters of a class defined in a function |
