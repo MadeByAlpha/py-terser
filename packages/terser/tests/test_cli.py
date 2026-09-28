@@ -151,7 +151,7 @@ def test_error_in_project(tmp_path):
 def test_verbose(project, tmp_path, args, env, verbose):
     result = run_terser(project, "--output", tmp_path / "out", *args, env={"TERSER_VERBOSE": "", **env})
     # not a terminal: plain lines, and every module as it's worked on when verbose
-    assert "Compiling modules: done 2/2 in " in result.stderr
+    assert "[2/2 100%] Compiling modules: done in " in result.stderr
     assert ("Compiling modules: helper: started" in result.stderr) is verbose
     assert ("Writing output: main: done in " in result.stderr) is verbose
 

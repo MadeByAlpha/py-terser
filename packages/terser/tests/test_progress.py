@@ -261,9 +261,9 @@ def test_auto_reporter_logs_progress_where_no_bar_can_be_drawn(terminal, no_ci, 
         stage.advance()
 
     assert isinstance(reporter, LogReporter)
-    lines = out.getvalue().splitlines()
-    assert lines[0] == "tool: Counting: started (2 total)"
-    assert lines[-1].startswith("tool: Counting: done 2/2 in ")
+    lines = _squeezed(out)
+    assert lines[0] == "tool: [0/2 0%] Counting: started"
+    assert lines[-1].startswith("tool: [2/2 100%] Counting: done in ")
     # every item only when verbose
     assert not any(": a: " in line for line in lines)
 
@@ -282,8 +282,9 @@ def test_auto_reporter_verbose_reports_items(terminal, no_ci, monkeypatch, tqdm)
 
     assert isinstance(reporter, LogReporter)
     assert warnings == []
-    assert "tool: Counting: pkg.a: started [0/1 (0%)]\n" in terminal.getvalue()
-    assert re.search(r"tool: Counting: pkg\.a: done in [0-9.]+s \[1/1 \(100%\)\]\n", terminal.getvalue())
+    lines = _squeezed(terminal)
+    assert "tool: [0/1 0%] Counting: pkg.a: started" in lines
+    assert any(re.fullmatch(r"tool: \[1/1 100%\] Counting: pkg\.a: done in [0-9.]+s", line) for line in lines)
 
 
 def test_auto_reporter_without_tqdm_in_ci(no_tqdm, monkeypatch):
@@ -294,9 +295,9 @@ def test_auto_reporter_without_tqdm_in_ci(no_tqdm, monkeypatch):
 
     assert isinstance(reporter, LogReporter)
     assert warnings == []
-    lines = out.getvalue().splitlines()
-    assert lines[0] == "tool: Counting: started (2 total)"
-    assert lines[-1].startswith("tool: Counting: done 2/2 in ")
+    lines = _squeezed(out)
+    assert lines[0] == "tool: [0/2 0%] Counting: started"
+    assert lines[-1].startswith("tool: [2/2 100%] Counting: done in ")
 
 
 def test_auto_reporter_without_tqdm_on_terminal(no_tqdm, no_ci, terminal):
@@ -325,6 +326,11 @@ def test_auto_reporter_warns_on_file_by_default(no_tqdm, no_ci, terminal):
     assert out.getvalue() == "tool: warning: tqdm or rich is not installed, so only the stages are shown, not their progress\n"
 
 
+def _squeezed(out):
+    """The lines written, each with runs of spaces (e.g. aligning the counts) squeezed into one."""
+    return [re.sub(r"\[ ", "[", re.sub(r" +", " ", line)) for line in out.getvalue().splitlines()]
+
+
 def _verbose_lines(run, **kwargs):
     out = io.StringIO()
     reporter = LogReporter("tool: ", file=out, progress=True, **kwargs)
@@ -333,7 +339,7 @@ def _verbose_lines(run, **kwargs):
     except RuntimeError:
         pass
     # durations vary: keep the lines up to them
-    return [line.rsplit(" [", 1)[0].rsplit(" in ", 1)[0].rsplit(" after ", 1)[0] for line in out.getvalue().splitlines()]
+    return [re.sub(r" (\[[0-9.]+s\]|(in|after) [0-9.]+s)$", "", line) for line in _squeezed(out)]
 
 
 def test_log_reporter_progress_reports_every_hundred():
@@ -343,10 +349,10 @@ def test_log_reporter_progress_reports_every_hundred():
                 pass
 
     assert _verbose_lines(run) == [
-        "tool: Counting: started (250 total)",
-        "tool: Counting: 100/250 (40%)",
-        "tool: Counting: 200/250 (80%)",
-        "tool: Counting: done 250/250",
+        "tool: [0/250 0%] Counting: started",
+        "tool: [100/250 40%] Counting",
+        "tool: [200/250 80%] Counting",
+        "tool: [250/250 100%] Counting: done",
     ]
 
 
@@ -359,9 +365,9 @@ def test_log_reporter_progress_every_given_units():
             stage.advance(2)
 
     assert _verbose_lines(run, every=4) == [
-        "tool: Counting: started (10 total)",
-        "tool: Counting: 8/10 (80%)",
-        "tool: Counting: done 10/10",
+        "tool: [0/10 0%] Counting: started",
+        "tool: [8/10 80%] Counting",
+        "tool: [10/10 100%] Counting: done",
     ]
 
 
@@ -371,7 +377,7 @@ def test_log_reporter_progress_ends_at_hundred():
             stage.advance(100)
 
     # the end is only reported once
-    assert _verbose_lines(run) == ["tool: Counting: started (100 total)", "tool: Counting: done 100/100"]
+    assert _verbose_lines(run) == ["tool: [0/100 0%] Counting: started", "tool: [100/100 100%] Counting: done"]
 
 
 def test_log_reporter_progress_stage_without_total():
@@ -389,7 +395,7 @@ def test_log_reporter_progress_stage_finished_early():
                 if i == 3:
                     break
 
-    assert _verbose_lines(run)[-1] == "tool: Passes: done 3/3"
+    assert _verbose_lines(run)[-1] == "tool: [3/3 100%] Passes: done"
 
 
 def test_log_reporter_progress_failed_stage():
@@ -398,7 +404,7 @@ def test_log_reporter_progress_failed_stage():
             stage.advance()
             raise ValueError
 
-    assert _verbose_lines(run)[-1] == "tool: Failing: failed at 1/4"
+    assert _verbose_lines(run)[-1] == "tool: [1/4 25%] Failing: failed"
 
 
 def test_log_reporter_progress_is_thread_safe():
@@ -412,7 +418,7 @@ def test_log_reporter_progress_is_thread_safe():
 
     lines = out.getvalue().splitlines()
     assert len(lines) == 1 + 79 + 1  # started, every hundred but the last, done
-    assert lines[-1].startswith("Threads: done 8000/8000 in ")
+    assert lines[-1].startswith("  [8000/8000 100%] Threads: done in ")
 
 
 def test_log_reporter_items():
@@ -425,15 +431,33 @@ def test_log_reporter_items():
         raise ValueError
 
     # durations vary: keep the lines up to them. An item that ended is counted as done
-    assert [re.sub(r" [0-9.]+s ", " ", line) for line in out.getvalue().splitlines()] == [
+    assert [re.sub(r" [0-9.]+s$", "", line) for line in out.getvalue().splitlines()] == [
         "tool: Compiling",
-        "tool: Compiling: pkg.a: started [0/3 (0%)]",
-        "tool: Compiling: pkg.b: started [0/3 (0%)]",
-        "tool: Compiling: pkg.b: done in [1/3 (33%)]",
-        "tool: Compiling: pkg.a: done in [2/3 (66%)]",
-        "tool: Compiling: pkg.c: started [2/3 (66%)]",
-        "tool: Compiling: pkg.c: failed after [3/3 (100%)]",
+        "tool:         [0/3   0%] Compiling: pkg.a: started",
+        "tool:         [0/3   0%] Compiling: pkg.b: started",
+        "tool:         [1/3  33%] Compiling: pkg.b: done in",
+        "tool:         [2/3  66%] Compiling: pkg.a: done in",
+        "tool:         [2/3  66%] Compiling: pkg.c: started",
+        "tool:         [3/3 100%] Compiling: pkg.c: failed after",
     ]
+
+
+def test_log_reporter_count_has_the_same_width_on_every_line():
+    out = io.StringIO()
+    reporter = LogReporter(file=out, progress=True)
+    with reporter.stage("Few", 3) as stage:
+        stage.advance(3)
+    with reporter.stage("Many", 12345) as stage:
+        stage.advance(12345)
+    with reporter.stage("Uncounted"):
+        pass
+
+    lines = out.getvalue().splitlines()
+    assert lines[0] == "        [0/3   0%] Few: started"
+    assert lines[2] == "[    0/12345   0%] Many: started"
+    assert lines[4] == "                   Uncounted: started"
+    # the stages' names all start in the same column
+    assert len({line.index(name) for line in lines for name in ("Few", "Many", "Uncounted") if name in line}) == 1
 
 
 def test_log_reporter_items_with_same_name():

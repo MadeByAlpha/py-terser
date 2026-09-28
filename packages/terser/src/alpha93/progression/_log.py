@@ -20,7 +20,11 @@ class LogReporter(Reporter):
     reports its size, its progress every `every` units of work, and how it ended and how long it
     took. With `items`, each item of a stage (see `Stage.item()`) is reported as it starts, and as it
     ends along with how long it took, to tell which item a slow or stuck stage is spending its time
-    on; either line also tells how far the stage is.
+    on.
+
+    Every line but the plain name of a stage starts with how far the stage is (`[done/total pct%]`),
+    in a column of the same width for every stage (blank for a stage that counts nothing), so that
+    the rest of the lines lines up.
     """
 
     def __init__(
@@ -59,7 +63,7 @@ class LogReporter(Reporter):
         if not self.__progress:
             self._write(name)
         else:
-            self._write(f"{name}: started" + (f" ({total} total)" if total is not None else ""))
+            self._write(f"{_count(0, total)} {name}: started")
         return _LogStage(self, name, total, self.__progress, self.__items, self.__every)
 
 
@@ -67,8 +71,19 @@ def _seconds(start: float, /) -> str:
     return f"{time.monotonic() - start:.1f}s"
 
 
+# fits `[99999/99999 100%]`; a longer count only pushes its own line further
+_COUNT_WIDTH = 18
+
+
 def _count(done: int, total: int | None, /) -> str:
-    return f"{done}/{total} ({done * 100 // total}%)" if total else str(done)
+    """How far a stage is, as a column of the same width on every line (and blank without a total)."""
+
+    if total is None:
+        count = ""
+    else:
+        percent = done * 100 // total if total else 100
+        count = f"[{done:>{len(str(total))}}/{total} {percent:>3}%]"
+    return count.rjust(_COUNT_WIDTH)
 
 
 @final
@@ -86,6 +101,9 @@ class _LogStage(Stage):
         self.__start = time.monotonic()
         self.__started: dict[str, list[float]] = {}  # when each item being worked on began
 
+    # every line is written under `self.__lock`, so that the counts go up line after line even when
+    # items are worked on concurrently
+
     @override
     def advance(self, n: int = 1, /) -> None:
         # counted even without `progress`, for the lines of items
@@ -95,8 +113,7 @@ class _LogStage(Stage):
             # the end is reported by the stage's final line
             if not self.__progress or before // self.__every == done // self.__every or done == self.total:
                 return
-            line = f"{self.name}: {_count(done, self.total)} [{_seconds(self.__start)}]"
-        self.__reporter._write(line)
+            self.__reporter._write(f"{_count(done, self.total)} {self.name} [{_seconds(self.__start)}]")
 
     @override
     def _begin(self, item: str, /) -> None:
@@ -105,8 +122,7 @@ class _LogStage(Stage):
 
         with self.__lock:
             self.__started.setdefault(item, []).append(time.monotonic())
-            count = _count(self.__done, self.total)
-        self.__reporter._write(f"{self.name}: {item}: started [{count}]")
+            self.__reporter._write(f"{_count(self.__done, self.total)} {self.name}: {item}: started")
 
     @override
     def _end(self, item: str, completed: bool, /) -> None:
@@ -118,11 +134,11 @@ class _LogStage(Stage):
             start = starts.pop()
             if not starts:
                 del self.__started[item]
-            count = _count(self.__done, self.total)
-        # finer than a stage's: an item often takes a few milliseconds
-        took = f"{time.monotonic() - start:.3f}s"
-        outcome = f"done in {took}" if completed else f"failed after {took}"
-        self.__reporter._write(f"{self.name}: {item}: {outcome} [{count}]")
+
+            # finer than a stage's: an item often takes a few milliseconds
+            took = f"{time.monotonic() - start:.3f}s"
+            outcome = f"done in {took}" if completed else f"failed after {took}"
+            self.__reporter._write(f"{_count(self.__done, self.total)} {self.name}: {item}: {outcome}")
 
     @override
     def _close(self, completed: bool, /) -> None:
@@ -130,11 +146,11 @@ class _LogStage(Stage):
             return
 
         with self.__lock:
-            done, counted = self.__done, self.total is not None
+            done, total = self.__done, self.total
             if completed:
                 # a stage may finish early (e.g. once transforms stop changing anything): what was
                 # done is all there was to do
-                line = f"{self.name}: done{f' {done}/{done}' if counted else ''} in {_seconds(self.__start)}"
+                line = f"{_count(done, None if total is None else done)} {self.name}: done in {_seconds(self.__start)}"
             else:
-                line = f"{self.name}: failed{f' at {done}/{self.total}' if counted else ''} after {_seconds(self.__start)}"
-        self.__reporter._write(line)
+                line = f"{_count(done, total)} {self.name}: failed after {_seconds(self.__start)}"
+            self.__reporter._write(line)

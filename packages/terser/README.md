@@ -157,17 +157,19 @@ is reported as plain lines instead: when it starts, every 100 modules (or passes
 with how long it took.
 
 `--verbose` (or `TERSER_VERBOSE=1`, which `--verbose False` overrides) also reports every module as a stage starts
-and finishes working on it, with how long it took and how far the stage is, always as plain lines: a slow module shows
-as a long duration, and a stuck one as a `started` line with no end.
+and finishes working on it, with how long it took, always as plain lines: a slow module shows as a long duration, and a
+stuck one as a `started` line with no end. Every line starts with how far its stage is, in a column of the same width
+for every stage:
 
 ```text
-Compiling modules: started (250 total)
-Compiling modules: pkg.util: started [0/250 (0%)]
-Compiling modules: pkg.util: done in 0.003s [1/250 (0%)]
-...
-Compiling modules: 100/250 (40%) [1.2s]
-...
-Compiling modules: done 250/250 in 3.1s
+    [  0/250   0%] Compiling modules: started
+    [  0/250   0%] Compiling modules: pkg.util: started
+    [  1/250   0%] Compiling modules: pkg.util: done in 0.003s
+    ...
+    [100/250  40%] Compiling modules [1.2s]
+    ...
+    [250/250 100%] Compiling modules: done in 3.1s
+                   Mangling globals: started
 ```
 
 ### Preserving names
