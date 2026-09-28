@@ -70,6 +70,15 @@ class CleanupLocalImports(SuiteTransformer):
 
         return kept
 
+    @staticmethod
+    def _probes(stmt: ast.Import | ast.ImportFrom, parent: ast.AST) -> bool:
+        """
+        If `stmt` is in the body of a `try`: whether it raises (`ImportError`) is what the code
+        tells apart, used names or not (`try: import email_validator` in FastAPI)
+        """
+
+        return isinstance(parent, (ast.Try, getattr(ast, 'TryStar', ast.Try))) and any(stmt is n for n in parent.body)
+
     def _clean_future(self, stmt: ast.ImportFrom):
         """
         A `__future__` import changes how the module compiles, whether its name is read or not:
@@ -89,7 +98,7 @@ class CleanupLocalImports(SuiteTransformer):
     def suite(self, node_list, parent):
         result = []
         for stmt in node_list:
-            if isinstance(stmt, (ast.Import, ast.ImportFrom)):
+            if isinstance(stmt, (ast.Import, ast.ImportFrom)) and not self._probes(stmt, parent):
                 if isinstance(stmt, ast.ImportFrom) and stmt.module == '__future__':
                     kept = self._clean_future(stmt)
                 else:

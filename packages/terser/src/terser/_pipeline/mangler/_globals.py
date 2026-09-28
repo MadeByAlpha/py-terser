@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from terser.ast import ast, ref
+from terser.ast.ref import ref_or_none
 from .._module_graph import import_bindings, submodule_hops
 from ..resolver.binder import alias_target
+from ..resolver.binding import ImportBinding
 from ._locals import NameAssigner, add_assigned
 from .util import preserved_names
 
@@ -117,6 +119,32 @@ def mark_imported(project: dict[str, ModuleRef]) -> None:
         origin.mark_preserved()
     for _, origin in _attribute_links(project):
         origin.mark_preserved()
+    for origin in _named_attribute_links(project):
+        origin.mark_preserved()
+
+
+_NAMED_ATTRIBUTE_FUNCTIONS = frozenset({'getattr', 'hasattr', 'setattr', 'delattr'})
+
+
+def _named_attribute_links(project: dict[str, ModuleRef]):
+    """
+    The bindings read off an imported module by name: `hasattr(module, "name")` (numpy's
+    `_core/__init__.py` checking `multiarray` for `_multiarray_umath`), and `getattr()` and the like
+    """
+
+    for module_ref in project.values():
+        for node in ast.walk(module_ref.ast):
+            if not (
+                isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in _NAMED_ATTRIBUTE_FUNCTIONS
+                and len(node.args) >= 2 and isinstance(node.args[0], ast.Name)
+                and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str)
+            ):
+                continue
+            binding = getattr(ref_or_none(node.args[0]), 'binding', None)
+            if not isinstance(binding, ImportBinding) or binding.target is None or binding.target_name is not None:
+                continue  # not a module of the project
+            name = node.args[1].value
+            yield from (b for b in binding.target.bindings if b.name == name)
 
 
 def mangle_globals(project: dict[str, ModuleRef], rename_globals: bool = False, preserved: dict[str, list[str]] | None = None):

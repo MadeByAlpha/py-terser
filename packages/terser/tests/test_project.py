@@ -506,3 +506,16 @@ def test_typed_dict_imported_by_another_module(tmp_path):
     out = tmp_path / "out"
     minify(root, output=out, config=TransformConfig(convert_typing_constructors=True), entry={"main"})
     assert run_py("main.py", cwd=out).stdout == "Host\n"
+
+
+def test_respect_all_keeps_what_other_modules_read_by_name(tmp_path):
+    # numpy's `_core/__init__.py` checks `hasattr(multiarray, "_multiarray_umath")`
+    root = write_tree(tmp_path / "src", {
+        "main.py": "import pkg\nprint(pkg.OK)\n",
+        "pkg/__init__.py": "from . import multiarray\nOK = hasattr(multiarray, '_impl') and getattr(multiarray, 'helper')()\n",
+        "pkg/multiarray.py": "__all__ = []\nfrom . import _impl\nfrom ._impl import helper\n",
+        "pkg/_impl.py": "def helper():\n    return 'ok'\n",
+    })
+    out = tmp_path / "out"
+    minify(root, output=out, config=TransformConfig(respect_all=True), entry={"main"})
+    assert run_py("main.py", cwd=out).stdout == "ok\n"

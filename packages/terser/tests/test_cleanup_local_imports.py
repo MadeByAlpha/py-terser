@@ -26,6 +26,11 @@ def test_cleanup_local_imports(source, expected):
     # nothing left for it to do
     ("from __future__ import annotations\nx = 1\nclass A:\n    b: 0", "x = 1\nclass A:\n    b: 0"),
     ("from __future__ import annotations, division, barry_as_FLUFL\nx = 1", "from __future__ import barry_as_FLUFL\nx = 1"),
+    # whether it raises `ImportError` is what it's for, like FastAPI's
+    (
+        "try:\n    import email_validator\n    from pydantic import EmailStr\nexcept ImportError:\n    EmailStr = str\n__all__ = ['EmailStr']",
+        "try:\n    import email_validator\n    from pydantic import EmailStr\nexcept ImportError:\n    EmailStr = str\n__all__ = ['EmailStr']",
+    ),
 ])
 def test_respect_all(source, expected):
     config = only("cleanup_local_imports", "respect_all")
