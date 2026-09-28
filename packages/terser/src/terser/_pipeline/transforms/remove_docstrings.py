@@ -30,8 +30,8 @@ class RemoveDocstrings(SuiteTransformer):
     """
     Remove docstrings, preserving module docstrings unless `also_modules` is
     set, and preserving anything decorated with `@terser_hints.preserve_docstring`. With
-    `optimize=2`, the ones `python -OO` removes, module docstrings included (the module is parsed
-    with `optimize=1`, for the hint to be seen).
+    `optimize=2`, the ones `python -OO` removes, module docstrings included and read or not (the
+    module is parsed with `optimize=1`, for the hint to be seen).
 
     Docstrings that may be read are kept: the module's when `__doc__` is read anywhere in the
     module, and every one when any `x.__doc__` is read (or `__doc__` inside a class), since that
@@ -64,7 +64,9 @@ class RemoveDocstrings(SuiteTransformer):
 
     @override
     def visit_Module(self, node: ast.Module):
-        reads_module_doc, reads_other_doc = _reads_doc(node)
+        # `python -OO` removes every docstring, read or not: code reading them (numpy) tells
+        # `__doc__ is None` apart, but not only some left
+        reads_module_doc, reads_other_doc = _reads_doc(node) if self._config.optimize != 2 else (False, False)
         if reads_other_doc:
             return node
 

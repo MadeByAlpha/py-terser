@@ -64,3 +64,12 @@ def test_optimize_2_keeps_preserved_docstrings():
     minified = minify_src(source, TransformConfig(optimize=2), rename_locals=False)
     assert "kept" in minified
     assert "removed" not in minified and "module" not in minified
+
+
+def test_optimize_2_removes_docstrings_read_too():
+    # like `python -OO`: numpy tells `__doc__ is None` apart, not only some docstrings left
+    from helpers import minify_src
+    from terser import TransformConfig
+
+    source = 'def f():\n    """doc"""\nif f.__doc__ is not None:\n    print(f.__doc__.upper())\nprint(1)\n'
+    assert "doc" not in minify_src(source, TransformConfig(optimize=2), rename_locals=False).replace("__doc__", "")
