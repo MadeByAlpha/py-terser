@@ -130,8 +130,19 @@ convert_to_lambda = true
 remove_dummy_assignments = true
 cleanup_local_imports = true
 respect_all = true
-# pydantic reads `ConfigDict.__annotations__`, which name what `pydantic.config` only imports under `TYPE_CHECKING`
-keep_future_annotations = true
+# these modules' annotations left (of pydantic models, TypedDicts...) name what they only import
+# under `TYPE_CHECKING`: pydantic evaluates `pydantic.config.ConfigDict.__annotations__`, say
+preserve_future_annotations = [
+    "anyio.lowlevel",
+    "h2.events",
+    "pydantic._internal._core_metadata",
+    "pydantic._internal._decorators",
+    "pydantic._internal._generate_schema",
+    "pydantic._internal._generics",
+    "pydantic.config",
+    "pydantic.fields",
+    "pydantic.main",
+]
 remove_typing_decorators = true
 remove_overloads = true
 remove_generics = true

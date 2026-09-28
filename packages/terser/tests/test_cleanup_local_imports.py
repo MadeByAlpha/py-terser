@@ -20,7 +20,7 @@ def test_cleanup_local_imports(source, expected):
 @pytest.mark.parametrize("source,expected", [
     ("import os\nimport sys\n__all__ = ['x']\nx = sys", "import sys\n__all__ = ['x']\nx = sys"),
     ("import os\n__all__ = ['os']", "import os\n__all__ = ['os']"),
-    # unless `keep_future_annotations`, see below
+    # unless `preserve_future_annotations` names the module, see below
     ("from __future__ import annotations\n__all__ = ['x']\nx: Undefined = 1", "__all__ = ['x']\nx: Undefined = 1"),
     ("from __future__ import annotations, division, barry_as_FLUFL\nx = 1", "from __future__ import barry_as_FLUFL\nx = 1"),
     # whether it raises `ImportError` is what it's for, like FastAPI's
@@ -41,9 +41,15 @@ def test_respect_all(source, expected):
     # nothing left for it to do
     ("from __future__ import annotations\nx = 1\nclass A:\n    b: 0", "x = 1\nclass A:\n    b: 0"),
 ])
-def test_keep_future_annotations(source, expected):
-    config = only("cleanup_local_imports", "respect_all", "keep_future_annotations")
+def test_preserve_future_annotations(source, expected):
+    config = only("cleanup_local_imports", "respect_all", preserve_future_annotations=["test_*"])
     assert_code(apply_transform(source, CleanupLocalImports, config, link=True), expected)
+
+
+def test_preserve_future_annotations_of_other_modules():
+    source = "from __future__ import annotations\n__all__ = ['x']\nx: Undefined = 1"
+    config = only("cleanup_local_imports", "respect_all", preserve_future_annotations=["other"])
+    assert_code(apply_transform(source, CleanupLocalImports, config, link=True), "__all__ = ['x']\nx: Undefined = 1")
 
 
 def test_respect_all_waits_for_the_project_to_be_linked():

@@ -1,3 +1,4 @@
+from fnmatch import fnmatch
 from typing import override
 
 from terser.ast import ast, is_scoped, ref
@@ -103,8 +104,8 @@ class CleanupLocalImports(SuiteTransformer):
         """
         A `__future__` import changes how the module compiles, whether its name is read or not:
         `barry_as_FLUFL` changes the grammar, and is kept. `annotations` keeps the annotations left
-        in the module unevaluated, and is kept with `config.keep_future_annotations` while some are
-        left. The others are how Python 3 always behaves.
+        in the module unevaluated, and is kept in the modules `config.preserve_future_annotations`
+        names while some are left. The others are how Python 3 always behaves.
         """
 
         if not self._config.respect_all:
@@ -112,7 +113,9 @@ class CleanupLocalImports(SuiteTransformer):
         return [
             alias for alias in stmt.names
             if alias.name == 'barry_as_FLUFL'
-            or alias.name == 'annotations' and self._config.keep_future_annotations and self._annotated
+            or alias.name == 'annotations' and self._annotated and any(
+                fnmatch(str(ref(self._module).spec), pattern) for pattern in self._config.preserve_future_annotations
+            )
         ]
 
     @override

@@ -53,7 +53,7 @@ What only reflection or code outside the bundle reaches is kept by name, in the 
 | `entry`: `anyio._backends._asyncio`                    | `import_module(f"anyio._backends._{name}")`                                  |
 | `entry`: `websockets` and the modules of it uvicorn imports | uvicorn (outside the bundle) uses `websockets` when it can import it   |
 | `preserve_type_checking`: `anyio`, `anyio.abc`         | anyio's lazy importer parses the imports under `if TYPE_CHECKING`            |
-| `keep_future_annotations`                              | pydantic evaluates `ConfigDict.__annotations__`                              |
+| `preserve_future_annotations`: the modules whose annotations left name what they only import under `TYPE_CHECKING` | pydantic evaluates `ConfigDict.__annotations__` |
 | `preserve_locals`: `**extra` of pydantic's `Field`     | read back through `inspect.signature()`                                      |
 | `preserve_globals`, `preserve_modules`                 | names looked up by string (for when mangling is on)                          |
 | `@terser_hints.preserve_annotations`                   | FastAPI reads the signatures of endpoints, pydantic the fields of models     |

@@ -122,10 +122,12 @@ class TransformConfig:
     respect_all: bool = False
     """When cleaning up unused imports, also remove unused module-level imports not listed in `__all__`"""
 
-    keep_future_annotations: bool = False
-    """With `respect_all`, keep `from __future__ import annotations` while annotations are left in
-    the module: code reading them at run time (pydantic's `ConfigDict.__annotations__`) otherwise
-    evaluates them, and a name only imported under `TYPE_CHECKING` raises `NameError`"""
+    preserve_future_annotations: list[str] = field(default_factory=list)
+    """Glob patterns matched against a module's dotted path (in single-file mode, its filename
+    without `.py`): with `respect_all`, matching modules keep `from __future__ import annotations`
+    while annotations are left in them, for code reading them at run time (pydantic evaluates
+    `pydantic.config.ConfigDict.__annotations__`, which name what it only imports under
+    `TYPE_CHECKING`: `NameError` once evaluated)"""
 
     cleanup_local_imports: bool = True
     """Remove unused local imports, and unused global imports if `respect_all`"""
