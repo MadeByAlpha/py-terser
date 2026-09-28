@@ -65,7 +65,9 @@ def minify(
     preserve_type_checking: bool = False,
 ) -> tuple[ast.Module, str | None]:
     source, shebang = preprocessor.preprocess(source, config.defines, config.strict)
-    module = parser.parse(source, spec, optimize=config.transform.optimize)
+    # `optimize=2` would take the docstrings out before `@terser_hints.preserve_docstring` is seen:
+    # `RemoveDocstrings` removes them instead
+    module = parser.parse(source, spec, optimize=min(config.transform.optimize, 1))
     ref(module).preserve_type_checking = preserve_type_checking
 
     for transform in transforms.__transforms__:

@@ -50,3 +50,17 @@ def test_hint_modules():
     config = only("remove_docstrings", hint_modules=["my.hints"])
     assert_code(apply_transform(source, RemoveDocstrings, config), source)
     assert_code(remove(source), 'from my.hints import preserve_docstring\n@preserve_docstring\ndef f():\n    0')
+
+
+def test_optimize_2_keeps_preserved_docstrings():
+    from helpers import minify_src
+    from terser import TransformConfig
+
+    source = (
+        '"""module"""\nfrom terser_hints import preserve_docstring\n'
+        '@preserve_docstring\ndef f():\n    """kept"""\n    return f.__name__\n'
+        'def g():\n    """removed"""\n    return 1\nprint(f(), g())\n'
+    )
+    minified = minify_src(source, TransformConfig(optimize=2), rename_locals=False)
+    assert "kept" in minified
+    assert "removed" not in minified and "module" not in minified

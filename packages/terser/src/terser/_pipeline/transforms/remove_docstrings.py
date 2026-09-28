@@ -29,7 +29,9 @@ def _reads_doc(module: ast.Module) -> tuple[bool, bool]:
 class RemoveDocstrings(SuiteTransformer):
     """
     Remove docstrings, preserving module docstrings unless `also_modules` is
-    set, and preserving anything decorated with `@terser_hints.preserve_docstring`
+    set, and preserving anything decorated with `@terser_hints.preserve_docstring`. With
+    `optimize=2`, the ones `python -OO` removes, module docstrings included (the module is parsed
+    with `optimize=1`, for the hint to be seen).
 
     Docstrings that may be read are kept: the module's when `__doc__` is read anywhere in the
     module, and every one when any `x.__doc__` is read (or `__doc__` inside a class), since that
@@ -40,11 +42,14 @@ class RemoveDocstrings(SuiteTransformer):
     def __init__(self, ctx, /):
         super().__init__(ctx)
         self._options = RemoveDocstringOptions() if isinstance(self._config.remove_docstrings, bool) else self._config.remove_docstrings
+        if self._config.optimize == 2:
+            # what `python -OO` removes: module docstrings too
+            self._options = RemoveDocstringOptions(also_modules=True)
 
     @override
     @classmethod
     def is_enabled(cls, config: TransformConfig, /) -> bool:
-        return config.remove_docstrings is not False
+        return config.remove_docstrings is not False or config.optimize == 2
 
     def _has_docstring(self, body) -> bool:
         return bool(body) and isinstance(body[0], ast.Expr) and is_constant_node(body[0].value, ast.Str)

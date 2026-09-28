@@ -113,7 +113,7 @@ multiple values, and can be repeated.
 | Option                           | Default | Description                                                                   |
 |----------------------------------|---------|-------------------------------------------------------------------------------|
 | `--passes N`                     | `5`     | Maximum number of transform passes. Stops early once nothing changes          |
-| `--optimize {-1,0,1,2}`          | `-1`    | Passed to `ast.parse()`. `2` also enables `--remove-debug` and `--remove-asserts` |
+| `--optimize {-1,0,1,2}`          | `-1`    | Passed to `ast.parse()` (as `1` for `2`). `2` also enables `--remove-debug`, `--remove-asserts` and `--remove-docstrings --also-modules`, which keep what `@terser_hints.preserve_docstring` marks |
 | `--apply-contracts`              | `True`  | Rewrite calls according to `--contracts`. See [Contracts](#contracts)         |
 | `--contracts RULE`               | see below | Contract rules to apply                                                     |
 | `--remove-literal-statements`    | `False` | Remove statements that are a single literal, except docstrings (see `--remove-docstrings`) |
