@@ -60,7 +60,7 @@ class CleanupLocalImports(SuiteTransformer):
             # import a module-level name
             if in_module_scope and (
                 not self._config.respect_all or binding.exported or binding.preserved
-                or not getattr(ref(self._module), 'linked', False)
+                or not ref(self._module).linked
             ):
                 kept.append(alias)
                 continue

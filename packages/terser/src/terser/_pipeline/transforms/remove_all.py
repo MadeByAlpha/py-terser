@@ -23,7 +23,8 @@ def _removal_allowed(module_path: str, config: TransformConfig) -> bool:
 class RemoveAll(SuiteTransformer):
     """
     Remove the top-level `__all__` assignment, for modules allowed by `config.remove_dunder_all`
-    / `config.remove_dunder_all_modules`
+    / `config.remove_dunder_all_modules`, unless other modules of the project read it (in project
+    mode): `from x import *`, `x.__all__`
     """
     FLAGS = TransformerFlag.INFLUENCES_MANGLING
 
@@ -34,7 +35,14 @@ class RemoveAll(SuiteTransformer):
 
     @override
     def visit_Module(self, node: ast.Module):
-        if not _removal_allowed(str(ref(node).spec), self._config):
+        module_ref = ref(node)
+        if not _removal_allowed(str(module_ref.spec), self._config):
+            return node
+
+        # read by other modules of the project (`mangler.mark_imported`): `from x import *`, `x.__all__`
+        if module_ref.star_imported or any(
+            binding.name == '__all__' and binding.preserved for binding in module_ref.bindings
+        ):
             return node
 
         assigns = [stmt for stmt in node.body if _is_dunder_all_assign(stmt)]

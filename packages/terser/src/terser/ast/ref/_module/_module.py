@@ -55,8 +55,17 @@ class ModuleRef(ScopedNode[ast.Module]):
     """If `TYPE_CHECKING` is left as is in this module, for code that reads it back from the
     source (e.g. anyio's lazy importer, looking for its `if TYPE_CHECKING` block)"""
 
+    linked: bool
+    """If `linker.link` has run: only then do transforms know what other modules use of this one"""
+
+    star_imported: bool
+    """If another module of the project imports `*` from this one (reading its `__all__`), once
+    `mangler.mark_imported` has run"""
+
     def __init__(self, module: ast.Module, spec: ModuleSpec):
         self.spec = spec
+        self.linked = False
+        self.star_imported = False
         self.preserved = set()
         self.all = None
         self.import_targets = {}

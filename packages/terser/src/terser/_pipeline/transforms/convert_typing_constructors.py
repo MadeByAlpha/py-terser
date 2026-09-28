@@ -95,7 +95,7 @@ class ConvertTypingConstructors(SuiteTransformer):
         binding = ref(node).binding
         if binding.exported or binding.preserved:
             return _UNSAFE  # used from other modules
-        if isinstance(namespace := ref(node).namespace, ast.Module) and not getattr(ref(namespace), 'linked', False):
+        if isinstance(namespace := ref(node).namespace, ast.Module) and not ref(namespace).linked:
             return _UNSAFE  # other modules may import it: only known once the project is linked (`mangler.mark_imported`)
 
         other_refs = [r for r in binding.references if r is not node]

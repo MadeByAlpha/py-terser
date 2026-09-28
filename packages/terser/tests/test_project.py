@@ -519,3 +519,16 @@ def test_respect_all_keeps_what_other_modules_read_by_name(tmp_path):
     out = tmp_path / "out"
     minify(root, output=out, config=TransformConfig(respect_all=True), entry={"main"})
     assert run_py("main.py", cwd=out).stdout == "ok\n"
+
+
+def test_remove_dunder_all_keeps_what_other_modules_read(tmp_path):
+    # numpy's `_core/numeric.py` imports `*` from `fromnumeric`, and extends its own `__all__` with it
+    root = write_tree(tmp_path / "src", {
+        "main.py": "from pkg.numeric import *\nimport pkg.numeric\nprint(sorted(pkg.numeric.__all__), take())\n",
+        "pkg/__init__.py": "",
+        "pkg/numeric.py": "from . import fromnumeric\nfrom .fromnumeric import *\n__all__ = ['own']\n__all__ += fromnumeric.__all__\nown = 1\n",
+        "pkg/fromnumeric.py": "__all__ = ['take']\ndef take():\n    return 'taken'\ndef _private():\n    pass\n",
+    })
+    out = tmp_path / "out"
+    minify(root, output=out, config=TransformConfig(remove_dunder_all=True), entry={"main"})
+    assert run_py("main.py", cwd=out).stdout == "['own', 'take'] taken\n"

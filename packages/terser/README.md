@@ -153,7 +153,7 @@ multiple values, and can be repeated.
 | `--convert-typing-constructors`  | `True`  | Field-only `NamedTuple` classes → `collections.namedtuple()`, and `TypedDict` classes only called with keywords (in a function) → `dict` |
 | `--convert-typing-extensions`    | `True`  | `from typing_extensions import X` → `from typing import X`, for names long in `typing` |
 | `--convert-dynamic-attribute-access` | `True` | `getattr(o, 'name')` → `o.name`, `setattr(o, 'name', v)` → `o.name = v`   |
-| `--remove-dunder-all`            | `False` | Remove the module-level `__all__`. Unsafe when another module does `import *` from it |
+| `--remove-dunder-all`            | `False` | Remove the module-level `__all__` (not in project mode of a module another module imports `*` from, or reads the `__all__` of) |
 | `--remove-dunder-all-modules PATTERN` | — | Glob patterns over dotted module paths where `__all__` is removed          |
 
 #### Mangling

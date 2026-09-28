@@ -112,7 +112,8 @@ def mark_imported(project: dict[str, ModuleRef]) -> None:
     """
     Mark the module-level bindings other modules of the linked `project` import (`from x import
     y`) or read (`x.y`) as preserved: they must stay bound, even once nothing in their own module
-    reads them (an import re-exported without `__all__`, say).
+    reads them (an import re-exported without `__all__`, say). The modules other modules import `*`
+    from are marked `star_imported`.
     """
 
     for _, _, origin in _from_import_links(project):
@@ -121,6 +122,12 @@ def mark_imported(project: dict[str, ModuleRef]) -> None:
         origin.mark_preserved()
     for origin in _named_attribute_links(project):
         origin.mark_preserved()
+
+    # `from x import *` reads `x.__all__`
+    for module_ref in project.values():
+        for unresolved in module_ref.wildcard_targets.values():
+            if (target := project.get(unresolved.path)) is not None:
+                target.star_imported = True
 
 
 _NAMED_ATTRIBUTE_FUNCTIONS = frozenset({'getattr', 'hasattr', 'setattr', 'delattr'})
