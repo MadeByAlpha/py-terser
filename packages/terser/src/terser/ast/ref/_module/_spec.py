@@ -31,6 +31,22 @@ class ModuleSpec(ABC):
         ...
 
 
+def _resolve_relative(package: str, module: str) -> str:
+    """`module` (`.x`, `..x`...), imported from a module of `package`, by its dotted path"""
+
+    if not module.startswith("."):
+        return module
+
+    rest = module.lstrip(".")
+    level = len(module) - len(rest)
+    parts = package.split(".") if package else []
+    if level - 1 >= len(parts):
+        raise ImportError(f"Could not resolve module: {module}")
+
+    base = parts[:len(parts) - (level - 1)]
+    return ".".join([*base, rest] if rest else base)
+
+
 @final
 class DummySpec(ModuleSpec):
     __name: str
@@ -72,6 +88,29 @@ class SingleFileModuleSpec(ModuleSpec):
             raise ImportError(f"Could not resolve module: {module}")
 
         return module[1:] if module.startswith(".") else module
+
+
+@final
+class NamespaceModuleSpec(ModuleSpec):
+    """
+    A module in a namespace package (a directory without `__init__.py`), like `vercel.version`:
+    named by its dotted path all the same, and resolving relative imports against its package.
+    """
+
+    __path: Path
+
+    def __init__(self, unresolved: ModuleSpec):
+        super().__init__(str(unresolved))
+        self.__path = unresolved.path
+
+    @override
+    @property
+    def path(self):
+        return self.__path
+
+    @override
+    def resolve(self, module: str):
+        return _resolve_relative(str(self).rpartition(".")[0], module)
 
 
 @final
@@ -141,7 +180,8 @@ class PackageSpec(ModuleSpec):
         if module.startswith(".."):
             if not self.__parent:
                 if not self.is_root_module:
-                    raise ImportError(f"Could not resolve module: {module}")
+                    # in a namespace package (`vercel.headers`)
+                    return _resolve_relative(str(self), module)
                 return module[2:]
 
             return self.__parent.resolve(module[1:])

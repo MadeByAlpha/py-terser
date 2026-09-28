@@ -146,7 +146,8 @@ class _SourceRoot:
 
                 v: UnresolvedModule
                 if not current:
-                    ns = spec.SingleFileModuleSpec(v.path)
+                    # in the root, or in a namespace package (a directory without `__init__.py`)
+                    ns = spec.NamespaceModuleSpec(v) if '.' in str(v) else spec.SingleFileModuleSpec(v.path)
                     resolved[str(ns)] = ns
                     continue
                 ns = spec.PackageModuleSpec(v, current)

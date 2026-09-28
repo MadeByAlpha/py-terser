@@ -572,3 +572,22 @@ def test_entry_tree_shaking_keeps_submodules_imported_for_what_importing_does(tm
     out = tmp_path / "out"
     minify(root, output=out, config=TransformConfig(respect_all=True, cleanup_local_imports=True), entry={"main"})
     assert run_py("main.py", cwd=out).stdout == "['plugin']\n"
+
+
+def test_modules_of_namespace_packages(tmp_path):
+    # `vercel` is a namespace package (no `__init__.py`), `vercel/version.py` its module `vercel.version`
+    root = write_tree(tmp_path / "src", {
+        "main.py": "from ns.version import VERSION\nfrom ns.sub.examples.extending import value\nprint(VERSION, value)\n",
+        "ns/version.py": "VERSION = '1'\n",
+        "ns/sub/__init__.py": "",
+        "ns/sub/examples/extending.py": "from .parse import parse\nvalue = parse()\n",
+        "ns/sub/examples/parse.py": "def parse():\n    return 'parsed'\n",
+        # the same file names elsewhere
+        "other/version.py": "VERSION = '2'\n",
+    })
+    out = tmp_path / "out"
+    minify(root, output=out, entry={"main"})
+    assert set(read_tree(out)) == {
+        "main.py", "ns/version.py", "ns/sub/__init__.py", "ns/sub/examples/extending.py", "ns/sub/examples/parse.py",
+    }
+    assert run_py("main.py", cwd=out).stdout == "1 parsed\n"
