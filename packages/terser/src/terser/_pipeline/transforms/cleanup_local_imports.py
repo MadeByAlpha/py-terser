@@ -1,6 +1,6 @@
 from typing import override
 
-from terser.ast import ast, ref
+from terser.ast import ast, is_scoped, ref
 from terser.config import TransformConfig
 from ..resolver import forget
 from ..resolver.binding import ImportBinding
@@ -24,10 +24,30 @@ def _has_annotations(module: ast.Module) -> bool:
     return False
 
 
+def mark_side_effect_imports(module: ast.Module) -> None:
+    """
+    Mark the import bindings nothing reads in the source as it is (before any transform) preserved:
+    such an import is there for what importing does (`import pkg.plugins`, `from . import _impl  #
+    noqa: F401`), not for the name. `CleanupLocalImports` only removes the imports other transforms
+    left unused (the ones only annotations read, say).
+    """
+
+    for node in ast.walk(module):
+        if not is_scoped(node):
+            continue
+        for binding in ref(node).bindings:
+            if isinstance(binding, ImportBinding) and not any(
+                isinstance(other, ast.Name) and isinstance(other.ctx, ast.Load) for other in binding.references
+            ):
+                binding.mark_preserved()
+
+
 class CleanupLocalImports(SuiteTransformer):
     """
-    Remove unused local (function/class-scope) imports, and unused
-    module-level imports too if `config.respect_all` (and not exported)
+    Remove the local (function/class-scope) imports other transforms left unused, and the
+    module-level ones too if `config.respect_all` (and not exported, nor imported by other
+    modules). An import nothing read in the first place is kept, for what importing does (see
+    `mark_side_effect_imports`).
     """
     FLAGS = TransformerFlag.REQUIRES_IMPORT_RESOLVE
 
@@ -65,7 +85,7 @@ class CleanupLocalImports(SuiteTransformer):
                 kept.append(alias)
                 continue
 
-            if len(binding.references) > 1:
+            if len(binding.references) > 1 or binding.preserved:
                 kept.append(alias)
 
         return kept

@@ -31,6 +31,8 @@ class HoistedBinding(Binding):
         self._local_namespace = None
 
     def __eq__(self, other):
+        if not isinstance(other, HoistedBinding):
+            return NotImplemented  # e.g. `forget()` looking for a name's binding among a namespace's
         return type(self.value) is type(other.value) and self.value == other.value
 
     def __ne__(self, other):

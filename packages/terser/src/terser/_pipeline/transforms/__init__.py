@@ -36,7 +36,6 @@ from .apply_constant_decorator import ApplyConstantDecorator
 __transforms__ = [
     # FLAGS = 0 (pre-resolve, pure syntax)
     UnfoldIIFE,
-    RemoveTypeStatements,
     ConvertTypingExtensions,
     CombineImports,
     RemovePass,
@@ -66,6 +65,7 @@ __transforms__ = [
 
     # FLAGS = REQUIRES_MODULE_RESOLVE
     RemoveAnnotations,
+    RemoveTypeStatements,
     RemoveTypingClasses,
     RemoveExceptionBrackets,
 

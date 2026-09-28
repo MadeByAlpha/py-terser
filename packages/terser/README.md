@@ -137,15 +137,15 @@ multiple values, and can be repeated.
 | `--hint-modules MODULE`          | —       | Modules whose members are recognized like `terser_hints`' (`preserve_docstring`, `preserve_annotations`, `constant`) |
 | `--target-version MAJOR MINOR…`  | —       | Python version the output runs under: `sys.version_info` comparisons it decides are folded (`3 12` is any 3.12.x) |
 | `--unfold-iife-lambdas`          | `True`  | `(lambda: x)()` → `x`, and `@lambda _: _()` / `@terser_hints.constant` → a call rebinding the function's name |
-| `--remove-type-statements`       | `False` | Remove `type X = ...` statements. Unsafe when another module imports the alias |
+| `--remove-type-statements`       | `False` | Remove the `type X = ...` statements nothing reads (not public ones, nor, in project mode, ones other modules import) |
 | `--convert-early-exits`          | `True`  | `if c: return a` followed by `return b` → `return a if c else b`               |
 | `--convert-to-inline`            | `True`  | `if c: f()` → `c and f()`, `if c: f()` / `else: g()` → `f() if c else g()`     |
 | `--convert-to-lambda`            | `True`  | `def f(x): return e` → `f = lambda x: e` (not for decorated or annotated functions, or ones `--preserve-locals` names) |
 | `--remove-dummy-assignments`     | `True`  | Remove `x = x` where `x` is bound elsewhere too, outside a class body         |
 | `--remove-docstrings`            | `False` | Remove docstrings, except under `@terser_hints.preserve_docstring` (a class keeps its attribute docstrings too), and ones that may be read (`__doc__`) |
 | `--also-modules`                 | `False` | With `--remove-docstrings`, remove module docstrings too                      |
-| `--cleanup-local-imports`        | `True`  | Remove unused imports in functions and classes                                |
-| `--respect-all`                  | `False` | With `--cleanup-local-imports`, remove unused module-level imports not in `__all__` too |
+| `--cleanup-local-imports`        | `True`  | Remove the imports in functions and classes other transforms left unused (an import nothing read in the first place is kept, for what importing does) |
+| `--respect-all`                  | `False` | With `--cleanup-local-imports`, remove the module-level imports left unused too, when not in `__all__` (nor, in project mode, imported by other modules, or named by a string) |
 | `--remove-typing-decorators`     | `True`  | Remove `@typing.override` and `@typing.final`                                  |
 | `--remove-overloads`             | `True`  | Remove `@typing.overload` stubs (also on with `--remove-typing-decorators`)   |
 | `--remove-generics`              | `True`  | Remove a bare `Generic` base, and unused type parameters of a class defined in a function |

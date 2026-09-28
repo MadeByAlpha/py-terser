@@ -7,6 +7,7 @@ from terser.ast import ast, ref
 from terser.config import RemoveAnnotationOptions, TransformConfig
 from terser.utils.hints import is_hinted
 from terser.utils.imports import qualified_name
+from ..resolver import forget
 from ._classes import class_definition
 from ._suite import SuiteTransformer, TransformerFlag
 
@@ -221,6 +222,8 @@ class RemoveAnnotations(SuiteTransformer):
             node.type_params = [self.visit(t) for t in node.type_params]
 
         if hasattr(node, 'returns') and self._options.remove_return_annotations and not preserved and not _is_annotated(node.returns):
+            if node.returns is not None:
+                forget([node.returns])
             node.returns = None
 
         return node
@@ -255,6 +258,8 @@ class RemoveAnnotations(SuiteTransformer):
 
     def visit_arg(self, node):
         if self._options.remove_argument_annotations and not _is_annotated(node.annotation):
+            if node.annotation is not None:
+                forget([node.annotation])
             node.annotation = None
         return node
 
@@ -269,7 +274,9 @@ class RemoveAnnotations(SuiteTransformer):
 
         if _is_annotated(node.annotation):
             return node
-        elif node.value:
+
+        forget([node.annotation])
+        if node.value:
             return self.add_child(ast.Assign([node.target], node.value), parent=node_ref.parent, namespace=node_ref.namespace)
         else:
             # Valueless annotations cause the interpreter to treat the variable as a local.

@@ -472,7 +472,8 @@ def test_respect_all_keeps_what_other_modules_import(tmp_path):
     # without `__all__`, `Cython` re-exports `from .Shadow import __version__` for `cython.py`
     root = write_tree(tmp_path / "src", {
         "main.py": "import pkg\nfrom pkg import __version__\nprint(__version__, pkg.helper())\n",
-        "pkg/__init__.py": "from .shadow import __version__\nfrom .shadow import helper\nimport os\n",
+        # `os` is only read by code removed as dead
+        "pkg/__init__.py": "from .shadow import __version__\nfrom .shadow import helper\nimport os\nif False:\n    os.getcwd()\n",
         "pkg/shadow.py": "__version__ = '3.3'\ndef helper():\n    return 'h'\n",
     })
     out = tmp_path / "out"
@@ -532,3 +533,42 @@ def test_remove_dunder_all_keeps_what_other_modules_read(tmp_path):
     out = tmp_path / "out"
     minify(root, output=out, config=TransformConfig(remove_dunder_all=True), entry={"main"})
     assert run_py("main.py", cwd=out).stdout == "['own', 'take'] taken\n"
+
+
+def test_remove_type_statements_keeps_what_other_modules_import(tmp_path):
+    # `numpy._typing` imports `type ArrayLike = ...` of `numpy._typing._array_like`
+    root = write_tree(tmp_path / "src", {
+        "main.py": "from aliases import Pair\nprint(Pair.__value__)\n",
+        "aliases.py": "__all__ = []\ntype Pair = tuple[int, int]\ntype _Unused = int\n",
+    })
+    out = tmp_path / "out"
+    minify(root, output=out, config=TransformConfig(remove_type_statements=True), entry={"main"})
+    assert "_Unused" not in read_tree(out)["aliases.py"]
+    assert run_py("main.py", cwd=out).stdout == "tuple[int, int]\n"
+
+
+def test_respect_all_keeps_what_a_string_names(tmp_path):
+    # numpy's `add_newdoc('numpy._core.multiarray', '_get_madvise_hugepage', ...)`
+    root = write_tree(tmp_path / "src", {
+        "main.py": "import pkg.docs\n",
+        "pkg/__init__.py": "",
+        "pkg/multiarray.py": "__all__ = []\nfrom ._impl import helper\n",
+        "pkg/_impl.py": "def helper():\n    pass\n",
+        "pkg/docs.py": "from . import multiarray\n"
+                       "def add_newdoc(place, obj):\n    print(getattr(__import__(place, fromlist=[obj]), obj).__name__)\n"
+                       "add_newdoc('pkg.multiarray', 'helper')\n",
+    })
+    out = tmp_path / "out"
+    minify(root, output=out, config=TransformConfig(respect_all=True), entry={"main"})
+    assert run_py("main.py", cwd=out).stdout == "helper\n"
+
+
+def test_entry_tree_shaking_keeps_submodules_imported_for_what_importing_does(tmp_path):
+    root = write_tree(tmp_path / "src", {
+        "main.py": "import pkg.plugins\nimport pkg\nprint(pkg.REGISTERED)\n",
+        "pkg/__init__.py": "REGISTERED = []\n",
+        "pkg/plugins.py": "import pkg\npkg.REGISTERED.append('plugin')\n",
+    })
+    out = tmp_path / "out"
+    minify(root, output=out, config=TransformConfig(respect_all=True, cleanup_local_imports=True), entry={"main"})
+    assert run_py("main.py", cwd=out).stdout == "['plugin']\n"

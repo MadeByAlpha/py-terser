@@ -9,6 +9,7 @@ from ._pipeline import (
     transforms,
 )
 from ._pipeline.printer import ModulePrinter
+from ._pipeline.transforms.cleanup_local_imports import mark_side_effect_imports
 from ._pipeline.transforms.fold_type_checking import keep_type_checking
 from .ast import CompareError, ast, compare_ast, ref
 from .exceptions import InvalidTransformError, UnbeneficialMinificationError
@@ -76,6 +77,7 @@ def minify(
     resolver.resolve(module)
     resolver.bind(module)
     mangler.mark_preserved(module, preserved_names, preserved_globals)
+    mark_side_effect_imports(module)
     if preserve_type_checking:
         keep_type_checking(module)
 

@@ -85,6 +85,8 @@ def imported_paths(module_ref: ModuleRef) -> set[str]:
         for alias in binding.aliases:
             unresolved = alias_target(module_ref, alias).unresolved
             paths.update(p for p in (unresolved.path, unresolved.submodule_path) if p is not None)
+            if isinstance(ref(alias).parent, ast.Import):
+                paths.add(alias.name)
     for found in module_ref.dynamic_imports:
         if found.path is not None:
             paths.add(found.path)
@@ -106,6 +108,10 @@ def dependencies(module_ref: ModuleRef, project: dict[str, ModuleRef]) -> set[st
         for alias in binding.aliases:
             if (target := alias_target(module_ref, alias).target) is not None:
                 deps.add(str(target.spec))
+            # `import a.b.c` imports each of them, whether `a.b.c` is then read or not
+            if isinstance(ref(alias).parent, ast.Import):
+                parts = alias.name.split('.')
+                deps.update(p for i in range(1, len(parts) + 1) if (p := '.'.join(parts[:i])) in project)
 
     # `from x import *` imports x, whether a name it provides is used or not
     for unresolved in module_ref.wildcard_targets.values():
