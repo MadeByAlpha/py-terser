@@ -4,6 +4,9 @@ from dataclasses import dataclass, field
 from os import PathLike
 from typing import Any, Literal
 
+VERBOSE_ENV = "TERSER_VERBOSE"
+"""Set (e.g. to `1`) to report every module each project-mode stage works on, and how long it took."""
+
 
 @dataclass()
 class RemoveAnnotationOptions:

@@ -309,7 +309,7 @@ class _TqdmStage(Stage):
                 self.__items.begin(item)
 
     @override
-    def _end(self, item: str, /) -> None:
+    def _end(self, item: str, completed: bool, /) -> None:
         if self.__items is not None:
             with self.__lock:
                 self.__items.end(item)

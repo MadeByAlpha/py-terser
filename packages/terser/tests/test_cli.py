@@ -142,6 +142,20 @@ def test_error_in_project(tmp_path):
     assert "Exception ignored" not in result.stderr
 
 
+@pytest.mark.parametrize(("args", "env", "verbose"), [
+    ([], {}, False),
+    (["--verbose"], {}, True),
+    ([], {"TERSER_VERBOSE": "1"}, True),
+    (["--verbose", "False"], {"TERSER_VERBOSE": "1"}, False),
+])
+def test_verbose(project, tmp_path, args, env, verbose):
+    result = run_terser(project, "--output", tmp_path / "out", *args, env={"TERSER_VERBOSE": "", **env})
+    # not a terminal: plain lines, and every module as it's worked on when verbose
+    assert "[2/2 100%] Compiling modules: done in " in result.stderr
+    assert ("Compiling modules: helper: started" in result.stderr) is verbose
+    assert ("Writing output: main: done in " in result.stderr) is verbose
+
+
 @pytest.mark.parametrize("args,message", [
     (["-", "other.py"], "multiple path arguments, reading from stdin not allowed"),
     (["-", "--in-place", "True"], "reading from stdin, --in-place is not valid"),

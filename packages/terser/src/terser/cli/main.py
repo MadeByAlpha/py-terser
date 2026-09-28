@@ -6,10 +6,10 @@ import os
 import sys
 
 import terser
-from alpha93.progression import auto_reporter
+from alpha93.progression import auto_reporter, env_flag
 
 from .._pipeline.mangler.util import preserved_names
-from ..config import Config
+from ..config import VERBOSE_ENV, Config
 from ..exceptions import UnbeneficialMinificationError
 from ._argparse import arguments_from_model, normalize_bool_flags
 from ._argv import TerserArguments, TerserParsedArguments, parse_preserve
@@ -88,7 +88,8 @@ def main(argv: list[str] | None = None):
 
     import anyio
 
-    with auto_reporter() as reporter:
+    verbose = args.verbose if args.verbose is not None else env_flag(VERBOSE_ENV)
+    with auto_reporter(verbose=verbose) as reporter:
         anyio.run(partial(terser.minify_project,
             args.path,
             Config(
