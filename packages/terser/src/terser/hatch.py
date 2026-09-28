@@ -18,7 +18,7 @@ from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 from alpha93.progression import NullReporter, Reporter, auto_reporter
 
-from ._pipeline.path_provider import SUFFIXES
+from ._pipeline.path_provider import FFI_SUFFIXES, SUFFIXES
 from .config import RemoveAnnotationOptions, RemoveDocstringOptions, TransformConfig, Config
 from .project import ProjectMinifier
 from .terser import minify_project
@@ -235,10 +235,16 @@ class TerserBuildHook(BuildHookInterface):
             } if self.build_config is not None else {}
             options = self._options({info.filename: project_files.get(info.filename) for info in contents})
 
-            # only the sources: an FFI binary next to a source of the same module (as mypyc builds
-            # ship them) would take the source's place in the project. Every other file moves along
-            # with a renamed package all the same
-            sources = [info for info in contents if info.filename.endswith(_SOURCE_SUFFIXES)]
+            # the sources, and the native extensions but the ones next to a source of the same module
+            # (as mypyc builds ship them), which would take the source's place in the project:
+            # tree-shaking keeps what extensions import (the module names in them). Every other file
+            # moves along with a renamed package all the same
+            modules = {_module_file(info.filename) for info in contents if info.filename.endswith(_SOURCE_SUFFIXES)}
+            sources = [
+                info for info in contents
+                if info.filename.endswith(_SOURCE_SUFFIXES)
+                or info.filename.lower().endswith(FFI_SUFFIXES) and _module_file(info.filename) not in modules
+            ]
 
             with tempfile.TemporaryDirectory(prefix="terser-build-") as tmp:
                 src_dir, out_dir = Path(tmp, "src"), Path(tmp, "out")
@@ -292,6 +298,13 @@ class TerserBuildHook(BuildHookInterface):
 
         os.chmod(tmp_path, os.stat(path).st_mode)
         os.replace(tmp_path, path)
+
+
+def _module_file(dist_path: str) -> str:
+    """`dist_path` without what follows the module name: `pkg/mod` of `pkg/mod.py` or `pkg/mod.cpython-314-x86_64-linux-gnu.so`"""
+
+    directory, _, name = dist_path.rpartition("/")
+    return f"{directory}/{name.split('.', 1)[0]}"
 
 
 def _dotted(dist_path: str) -> str:

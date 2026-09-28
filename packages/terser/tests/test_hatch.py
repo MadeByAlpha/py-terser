@@ -462,6 +462,23 @@ def test_rollup_rename_modules_and_entry(tmp_path, extra_rollup_sources):
     assert list(dist.iterdir()) == [path]
 
 
+def test_rollup_entry_keeps_what_extensions_import(tmp_path, extra_rollup_sources):
+    # numpy's `_multiarray_umath` imports `numpy._core._exceptions` from C: the name is in the binary
+    extra_rollup_sources({
+        "vendor/helper/loader.py": "from . import _native\n",
+        "vendor/helper/_native.cpython-314-x86_64-linux-gnu.so": "\x7fELF helper._errors PyInit__native\n",
+        "vendor/helper/_errors.py": "class NativeError(Exception):\n    pass\n",
+        "vendor/helper/_unused.py": "UNUSED = 1\n",
+    })
+    _, path = _build_rollup(tmp_path, {"entry": ["demo", "helper.loader"]})
+
+    with zipfile.ZipFile(path) as whl:
+        assert _record_is_valid(whl)
+        names = set(whl.namelist())
+    assert {"helper/loader.py", "helper/_errors.py", "helper/_native.cpython-314-x86_64-linux-gnu.so"} <= names
+    assert "helper/_unused.py" not in names
+
+
 SIGNATURE_SOURCES = {
     "src/demo/__init__.py": "",
     "src/demo/sig.py": (
