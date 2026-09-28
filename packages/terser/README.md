@@ -105,6 +105,7 @@ multiple values, and can be repeated.
 | `--preserve-shebang`   | `True`  | Keep the shebang (`#!...`) line                                               |
 | `--prefer-single-line` | `False` | Join statements with `;` instead of newlines, even when it saves no bytes     |
 | `--workers N`          | auto    | Number of worker threads in project mode                                       |
+| `--verbose`            | `$TERSER_VERBOSE` | Report every module each stage works on (project mode) as it starts and ends, and how long it took. See [Progress](#progress) |
 | `--entry MODULE`       | —       | Entry point modules (dotted module path or file path), project mode only. See [Tree-shaking](#tree-shaking) |
 | `--preserve-type-checking PATTERN` | — | Glob patterns over dotted module paths (filenames in single-file mode); matching modules keep `TYPE_CHECKING` and the code it guards. See [Keeping `TYPE_CHECKING`](#keeping-type_checking) |
 
@@ -146,6 +147,26 @@ multiple values, and can be repeated.
 | `--preserve-globals NAMES`   | —       | Global names that are not renamed                                              |
 | `--rename-modules`           | `False` | Rename module/package files and directories. Project mode only, requires `--output` |
 | `--preserve-modules PATTERN` | —       | Glob patterns over dotted module paths; matching modules keep their name      |
+
+### Progress
+
+Project mode reports its progress on stderr. On an interactive terminal, the top bar shows the whole run (every stage
+counted alike), the one below the current stage, and the line below them the modules being worked on. In CI (the `CI`
+environment variable is set), or wherever stderr is no interactive terminal (a log, a pipe, `TERM=dumb`), each stage
+is reported as plain lines instead: when it starts, at every tenth of its progress, and when it ends, with how long it
+took.
+
+`--verbose` (or `TERSER_VERBOSE=1`, which `--verbose False` overrides) also reports every module as a stage starts
+and finishes working on it, with how long it took, always as plain lines: a slow module shows as a long duration, and a
+stuck one as a `started` line with no end.
+
+```text
+Compiling modules: started (3 total)
+Compiling modules: pkg.util: started
+Compiling modules: pkg.util: done in 0.003s
+Compiling modules: 1/3 (33%) [0.0s]
+...
+```
 
 ### Preserving names
 
@@ -251,12 +272,10 @@ Supported keys:
 - `config` table: every `TransformConfig` field (see [Python API](#python-api)). `remove_annotations` also takes a
   table of the four `remove_*_annotations` options.
 
-The hook shows its progress on stderr; `hatch build -q` (or `HATCH_QUIET=1`) turns it off. On a terminal, the top bar
-shows the whole build (every stage counted alike), the one below the current stage, and the line below them the modules
-being compiled or written; elsewhere, each stage leaves one line when done. Progress bars need `tqdm` and `rich`; when
-the build environment lacks them, the hook lists the stages as they start
-after a warning, or, in CI (the `CI` environment variable is set), reports each stage's progress every tenth as plain
-lines.
+The hook shows its progress on stderr the same way as [the command line](#progress); `hatch build -q` (or
+`HATCH_QUIET=1`) turns it off, and `hatch build -v` (or `HATCH_VERBOSE=1`), like `TERSER_VERBOSE=1`, reports every
+module. Progress bars need `tqdm` and `rich`; when the build environment lacks them, the hook lists the stages as they
+start on a terminal, after a warning.
 
 ## Python API
 

@@ -5,11 +5,12 @@ A `Reporter` opens one `Stage` at a time; a stage counts `total` units of work, 
 `Stage.advance()` (which may be called from any thread). Stages are context managers: leaving one
 normally marks it complete, leaving it by an exception leaves it where it stopped.
 
-`TqdmReporter` needs tqdm and rich, which are optional; `auto_reporter()` falls back to `LogReporter`
-without them.
+`TqdmReporter` draws progress bars on an interactive terminal, and needs tqdm and rich, which are
+optional. `LogReporter` writes plain lines instead: `auto_reporter()` picks it in CI, anywhere that is
+no interactive terminal, without tqdm and rich, and when asked to report every item of a stage.
 """
 
-from ._auto import auto_reporter, in_ci
+from ._auto import auto_reporter, env_flag, in_ci, interactive
 from ._log import LogReporter
 from ._reporter import NullReporter, Reporter, Stage
 
@@ -23,7 +24,9 @@ if __debug__ and __import__("typing").TYPE_CHECKING:
         "Stage",
         "TqdmReporter",
         "auto_reporter",
+        "env_flag",
         "in_ci",
+        "interactive",
     )
 
 

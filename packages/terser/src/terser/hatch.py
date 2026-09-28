@@ -16,10 +16,10 @@ import anyio
 import pathspec
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
-from alpha93.progression import NullReporter, Reporter, auto_reporter
+from alpha93.progression import NullReporter, Reporter, auto_reporter, env_flag
 
 from ._pipeline.path_provider import SUFFIXES
-from .config import RemoveAnnotationOptions, TransformConfig, Config
+from .config import VERBOSE_ENV, RemoveAnnotationOptions, TransformConfig, Config
 from .project import ProjectMinifier
 from .terser import minify_project
 
@@ -116,7 +116,9 @@ class TerserBuildHook(BuildHookInterface):
         def warn(message: str) -> None:
             self.app.display_warning(f'terser: {message}; add "tqdm" and "rich" to `[build-system].requires` to see it')
 
-        return auto_reporter("terser: ", warn=warn)
+        # `hatch build -v` (or `HATCH_VERBOSE`) asks for more: every module, as it's worked on
+        verbose = self.app.verbosity > 0 or env_flag(VERBOSE_ENV)
+        return auto_reporter("terser: ", warn=warn, verbose=verbose)
 
     def _option[T](self, name: str, check: Callable[[Any], bool], expected: str, default: T) -> T:
         value = self.config.get(name, default)

@@ -109,6 +109,10 @@ class TerserArguments(BaseModel):
     """Number of worker threads to process modules with in project mode. Defaults to the
     interpreter's default thread pool sizing."""
 
+    verbose: bool | None = None
+    """Report every module each stage works on in project mode as it starts and ends, and how
+    long it took, as plain lines on stderr. Defaults to the TERSER_VERBOSE environment variable"""
+
     preserve_type_checking: Annotated[set[str], Field(default_factory=set)]
     """Glob patterns matched against a module's dotted path (or filename, in single-file mode) -
     matching modules keep `TYPE_CHECKING` and the code it guards as they are, for code reading
@@ -155,5 +159,5 @@ class TerserParsedArguments(TerserArguments):
             output_options=output_options,
             transform_options=transform_options,
             mangling_options=mangling_options,
-            **_given(namespace, ("preserve_shebang", "prefer_single_line", "workers", "preserve_type_checking", "entry")),
+            **_given(namespace, ("preserve_shebang", "prefer_single_line", "workers", "verbose", "preserve_type_checking", "entry")),
         )

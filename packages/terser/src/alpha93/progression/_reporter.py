@@ -20,7 +20,7 @@ class Task:
         return self
 
     def __exit__(self, exc_ty: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None):
-        self.stage._end(self.name)
+        self.stage._end(self.name, exc is None)
         self.stage.advance()
 
         if exc:
@@ -46,8 +46,8 @@ class Stage(ABC):
     def _begin(self, item: str, /) -> None:
         """`item` is being worked on from now. Thread-safe."""
 
-    def _end(self, item: str, /) -> None:
-        """`item` is no longer being worked on. Thread-safe."""
+    def _end(self, item: str, completed: bool, /) -> None:
+        """`item` is no longer being worked on, having been `completed` or failed. Thread-safe."""
 
     def iter[T](self, iterable: Iterable[T], /) -> Iterator[T]:
         """Yield from `iterable`, counting an item as done once the loop body moves past it."""

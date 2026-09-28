@@ -50,7 +50,7 @@ SOURCES = {
 @pytest.fixture
 def wheel(tmp_path):
     project = write_tree(tmp_path / "demo", {"pyproject.toml": PYPROJECT, **SOURCES})
-    result = run_py("-m", "hatchling", "build", "-t", "wheel", "-d", "dist", cwd=project)
+    result = run_py("-m", "hatchling", "build", "-t", "wheel", "-d", "dist", cwd=project, env={"TERSER_VERBOSE": ""})
     dist = project / "dist"
     return result, dist, next(dist.glob("*.whl"))
 
@@ -79,9 +79,19 @@ def test_no_warnings(wheel):
 
 
 def test_progress_is_shown(wheel):
+    # not on a terminal: as plain lines
     result, _, _ = wheel
-    assert "terser: Compiling modules: 100%" in result.stderr
-    assert "terser: Writing output: 100%" in result.stderr
+    assert "terser: Compiling modules: done 2/2 in " in result.stderr
+    assert "terser: Writing output: done 2/2 in " in result.stderr
+    assert "terser: Compiling modules: demo.math: started" not in result.stderr
+
+
+@pytest.mark.parametrize("env", [{"TERSER_VERBOSE": "1"}, {"HATCH_VERBOSE": "1"}])
+def test_verbose_progress_shows_modules(tmp_path, env):
+    project = write_tree(tmp_path / "demo", {"pyproject.toml": PYPROJECT, **SOURCES})
+    result = run_py("-m", "hatchling", "build", "-t", "wheel", "-d", "dist", cwd=project, env={"TERSER_VERBOSE": "", **env})
+    assert "terser: Compiling modules: demo.math: started" in result.stderr
+    assert "terser: Compiling modules: demo.math: done in " in result.stderr
 
 
 def test_output_directory_is_clean(wheel):
@@ -202,11 +212,12 @@ def test_rollup_output_directory_is_clean(rollup_wheel):
     assert list(dist.iterdir()) == [path]
 
 
-def test_rollup_progress_is_shown(tmp_path, capsys):
+def test_rollup_progress_is_shown(tmp_path, capsys, monkeypatch):
+    monkeypatch.delenv("TERSER_VERBOSE", raising=False)
     _build_rollup(tmp_path)
     stderr = capsys.readouterr().err
     for stage in ("Extracting wheel", "Compiling modules", "Writing output", "Rewriting wheel"):
-        assert f"terser: {stage}: 100%" in stderr
+        assert f"terser: {stage}: done " in stderr
 
 
 def test_rollup_progress_is_quiet(tmp_path, capsys, monkeypatch):
@@ -215,9 +226,12 @@ def test_rollup_progress_is_quiet(tmp_path, capsys, monkeypatch):
     assert "terser:" not in capsys.readouterr().err
 
 
-def test_rollup_progress_without_tqdm(tmp_path, capsys, monkeypatch):
+def test_rollup_progress_without_tqdm_on_terminal(tmp_path, capsys, monkeypatch):
+    import alpha93.progression._auto
+
     monkeypatch.setitem(sys.modules, "tqdm", None)
     monkeypatch.delenv("CI", raising=False)
+    monkeypatch.setattr(alpha93.progression._auto, "interactive", lambda file: True)
     _build_rollup(tmp_path)
     lines = capsys.readouterr().err.splitlines()
 
