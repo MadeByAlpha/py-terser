@@ -23,7 +23,7 @@ dev = ["hatch>=1.14", "uvicorn>=0.37"]
 
 [tool.uv.sources]
 reports = { workspace = true }
-py-terser = { path = "../../packages/terser" }
+py-terser = { path = "../../.." }
 
 [tool.uv.workspace]
 members = ["packages/*"]
@@ -50,7 +50,7 @@ external = ["vercel-runtime", "uvicorn", "click", "colorama", "h11", "wsproto", 
 
 # `hatch build` installs `[build-system].requires` without `[tool.uv.sources]`: point it at this checkout
 [tool.hatch.envs.hatch-build]
-dependencies = ["py-terser @ {root:parent:parent:uri}/packages/terser"]
+dependencies = ["py-terser @ {root:parent:parent:parent:uri}"]
 
 [tool.hatch.build.targets.rollup.hooks.terser]
 workers = 32
@@ -130,6 +130,8 @@ convert_to_lambda = true
 remove_dummy_assignments = true
 cleanup_local_imports = true
 respect_all = true
+# pydantic reads `ConfigDict.__annotations__`, which name what `pydantic.config` only imports under `TYPE_CHECKING`
+keep_future_annotations = true
 remove_typing_decorators = true
 remove_overloads = true
 remove_generics = true

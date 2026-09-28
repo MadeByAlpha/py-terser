@@ -3,11 +3,13 @@ Check that minifying the bundle with py-terser keeps the app's behavior.
 
 1. Builds the bundle twice with `hatch build -t rollup` on free-threaded Python 3.14: once from a
    copy of the workspace without the `terser` hook (the baseline), and once as configured.
-2. Installs each wheel into its own virtual environment, and serves it with uvicorn (external to
-   the bundle, like on Vercel).
-3. Sends both servers the same requests, and compares status, content type and body.
+2. Installs each wheel into its own virtual environment, and imports every module of the minified
+   wheel in both: the ones only the minified one fails to import are reported.
+3. Serves each with uvicorn (external to the bundle, like on Vercel), sends both servers the same
+   requests, and compares status, content type and body.
 
-Run from the workspace root: `uv run --python 3.14t scripts/verify.py` (see README.md).
+Run from the workspace root: `uv run --python 3.14t scripts/verify.py` (see README.md), or through
+`tests/test_fastapi_app.py` of py-terser.
 """
 
 from __future__ import annotations
@@ -32,20 +34,23 @@ ROOT = Path(__file__).resolve().parent.parent
 BUILD = ROOT / "build"
 PYTHON = "3.14t"
 # the free-threaded interpreter only differs by its ABI: keep its environments apart from the default `.venv`
-ENV = {**os.environ, "UV_PROJECT_ENVIRONMENT": ".venv-3.14t"}
+ENV = {**os.environ, "UV_PROJECT_ENVIRONMENT": os.environ.get("UV_PROJECT_ENVIRONMENT", ".venv-3.14t")}
+# a build stuck in a module (as `mangle_locals` once was in `numpy.testing.overrides`) fails, rather than hangs
+BUILD_TIMEOUT = 3600
 
 
-def run(*args: str | Path, cwd: Path = ROOT, env: dict[str, str] = ENV) -> None:
+def run(*args: str | Path, cwd: Path = ROOT, env: dict[str, str] = ENV, timeout: float | None = None) -> None:
     print("$", " ".join(map(str, args)), flush=True)
-    subprocess.run(list(map(str, args)), cwd=cwd, env=env, check=True)
+    subprocess.run(list(map(str, args)), cwd=cwd, env=env, check=True, timeout=timeout)
 
 
 def build_minified() -> Path:
     out = BUILD / "minified"
     shutil.rmtree(out, ignore_errors=True)
-    # a fresh build environment, so it picks up the py-terser checkout as it is now
-    run("uv", "run", "--python", PYTHON, "hatch", "env", "remove", "hatch-build")
-    run("uv", "run", "--python", PYTHON, "hatch", "build", "-t", "rollup", out)
+    # a build environment of its own, so it picks up the py-terser checkout as it is now
+    env = {**ENV, "HATCH_DATA_DIR": str(BUILD / "hatch")}
+    shutil.rmtree(BUILD / "hatch", ignore_errors=True)
+    run("uv", "run", "--python", PYTHON, "hatch", "build", "-t", "rollup", out, env=env, timeout=BUILD_TIMEOUT)
     return _wheel(out)
 
 
@@ -70,7 +75,7 @@ def build_baseline() -> Path:
 
         env = {**ENV, "HATCH_DATA_DIR": str(Path(tmp, "hatch"))}
         run("uv", "lock", cwd=src, env=env)
-        run("uv", "run", "--python", PYTHON, "hatch", "build", "-t", "rollup", out, cwd=src, env=env)
+        run("uv", "run", "--python", PYTHON, "hatch", "build", "-t", "rollup", out, cwd=src, env=env, timeout=BUILD_TIMEOUT)
     return _wheel(out)
 
 
@@ -85,6 +90,51 @@ def install(name: str, wheel: Path) -> Path:
     run("uv", "venv", "--python", PYTHON, venv)
     run("uv", "pip", "install", "--python", venv / "bin" / "python", wheel, "uvicorn")
     return venv / "bin" / "python"
+
+
+IMPORT_ALL = r"""
+import importlib, json, sys, traceback, warnings
+warnings.simplefilter("ignore")
+failed = {}
+for name in json.loads(sys.argv[1]):
+    try:
+        importlib.import_module(name)
+    except BaseException as exc:
+        frame = traceback.extract_tb(exc.__traceback__)[-1:] or [None]
+        where = f" ({frame[0].filename}:{frame[0].lineno})" if frame[0] else ""
+        failed[name] = f"{type(exc).__name__}: {exc}{where}"
+print(json.dumps(failed))
+"""
+
+
+def modules(wheel: Path) -> list[str]:
+    """Every module of `wheel` but tests and scripts, by its dotted path"""
+
+    import zipfile
+
+    names = []
+    with zipfile.ZipFile(wheel) as whl:
+        for name in whl.namelist():
+            parts = name.removesuffix(".py").split("/")
+            if not name.endswith(".py") or parts[0].endswith((".dist-info", ".data")):
+                continue
+            if parts[-1] == "__init__":
+                parts.pop()
+            if any(p in ("tests", "testing", "__main__", "conftest") or p.startswith("test_") for p in parts):
+                continue
+            names.append(".".join(parts))
+    return sorted(names)
+
+
+def import_all(python: Path, names: list[str]) -> dict[str, str]:
+    """The modules of `names` that `python` fails to import, with why"""
+
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("VIRTUAL_ENV", "UV_", "PYTHON"))}
+    result = subprocess.run(
+        [python, "-c", IMPORT_ALL, json.dumps(names)], cwd=BUILD, env={**env, "PYTHON_GIL": "0"},
+        capture_output=True, text=True, timeout=1200,
+    )
+    return json.loads(result.stdout.strip().splitlines()[-1])
 
 
 class Server:
@@ -228,9 +278,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--no-build", action="store_true", help="reuse the wheels under build/")
     parser.add_argument("--no-baseline", action="store_true", help="only rebuild the minified wheel")
+    parser.add_argument("--build-dir", type=Path, help="where wheels, environments and logs go (default: build/)")
     args = parser.parse_args()
 
-    BUILD.mkdir(exist_ok=True)
+    global BUILD
+    BUILD = (args.build_dir or BUILD).resolve()
+    BUILD.mkdir(parents=True, exist_ok=True)
     if args.no_build:
         baseline, minified = _wheel(BUILD / "baseline"), _wheel(BUILD / "minified")
     else:
@@ -240,15 +293,24 @@ def main() -> int:
     print(f"baseline: {baseline.stat().st_size:>11,} bytes  {baseline.name}")
     print(f"minified: {minified.stat().st_size:>11,} bytes  {minified.name}")
 
+    pythons = {name: install(name, wheel) for name, wheel in (("baseline", baseline), ("minified", minified))}
+
+    names = modules(minified)
+    failed = {name: import_all(python, names) for name, python in pythons.items()}
+    broken = {name: why for name, why in failed["minified"].items() if name not in failed["baseline"]}
+    print(f"{len(names) - len(broken)}/{len(names)} modules import")
+    for name, why in sorted(broken.items()):
+        print(f"  FAIL  import {name}: {why}")
+
     results = {}
-    for name, wheel in (("baseline", baseline), ("minified", minified)):
-        server = Server(name, install(name, wheel))
+    for name, python in pythons.items():
+        server = Server(name, python)
         try:
             results[name] = exchange(server)
         finally:
             server.stop()
 
-    failures = 0
+    failures = len(broken)
     for (request, expected), (_, actual) in zip(results["baseline"], results["minified"], strict=True):
         if expected == actual:
             print(f"  ok    {request}  ({expected['status']})")
@@ -263,7 +325,7 @@ def main() -> int:
         print("\n".join("        " + line for line in diff))
 
     (BUILD / "results.json").write_text(json.dumps(results, indent=1))
-    print(f"{len(results['baseline']) - failures}/{len(results['baseline'])} responses match")
+    print(f"{len(results['baseline']) - failures + len(broken)}/{len(results['baseline'])} responses match")
     return 1 if failures else 0
 
 

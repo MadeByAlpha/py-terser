@@ -5,3 +5,5 @@ dependencies = []
 
 [tool.uv.workspace]
 members = ["packages/*"]
+# a uv workspace of its own, built by `tests/test_fastapi_app.py`
+exclude = ["packages/terser/tests/fixtures/*"]

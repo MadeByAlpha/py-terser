@@ -106,3 +106,9 @@ ignore = [
 python = "../../.venv"
 root = ["./src"]
 python-version = "3.14"     # INTENDED: due to type annotations
+
+[tool.pytest.ini_options]
+markers = [
+    "e2e: builds, minifies and runs tests/fixtures/fastapi_app for real (needs uv, network access and some 20 minutes); run with `-m e2e`",
+]
+addopts = ["-m", "not e2e"]

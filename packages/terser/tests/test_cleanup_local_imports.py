@@ -1,6 +1,6 @@
 import pytest
 
-from helpers import apply_transform, assert_code, only
+from helpers import apply_transform, assert_code, only, run_py
 from terser._pipeline.transforms import CleanupLocalImports
 from terser.ast import ref
 
@@ -62,3 +62,24 @@ def test_removed_import_is_forgotten():
     assert_code(module, "def f():\n    return 1")
     function = module.body[0]
     assert [binding.name for binding in ref(function).bindings] == []
+
+
+def test_removed_import_does_not_hang_local_renaming():
+    # `numpy.testing.overrides`: with every option on, local renaming never stopped there, as the
+    # binding of the removed import was moved into the lambda the function became
+    source = (
+        "def get():\n"
+        "    from numpy.lib import recfunctions\n"
+        "    if False:\n"
+        "        recfunctions.f()\n"
+        "    return _array_functions.copy()\n"
+    )
+    code = (
+        "import sys, terser\n"
+        "from terser.config import RemoveAnnotationOptions, RemoveDocstringOptions, TransformConfig\n"
+        "config = TransformConfig(optimize=2, remove_literal_statements=True, respect_all=True,\n"
+        "    remove_docstrings=RemoveDocstringOptions(also_modules=True),\n"
+        "    remove_annotations=RemoveAnnotationOptions(remove_attribute_annotations=True))\n"
+        "print(terser.minify(sys.stdin.read(), config, 'overrides.py'))\n"
+    )
+    assert run_py("-c", code, stdin=source).stdout == "get=lambda:_array_functions.copy()\n"
