@@ -101,9 +101,6 @@ class _LogStage(Stage):
         self.__start = time.monotonic()
         self.__started: dict[str, list[float]] = {}  # when each item being worked on began
 
-    # every line is written under `self.__lock`, so that the counts go up line after line even when
-    # items are worked on concurrently
-
     @override
     def advance(self, n: int = 1, /) -> None:
         # counted even without `progress`, for the lines of items
@@ -113,7 +110,8 @@ class _LogStage(Stage):
             # the end is reported by the stage's final line
             if not self.__progress or before // self.__every == done // self.__every or done == self.total:
                 return
-            self.__reporter._write(f"{_count(done, self.total)} {self.name} [{_seconds(self.__start)}]")
+            line = f"{_count(done, self.total)} {self.name} [{_seconds(self.__start)}]"
+        self.__reporter._write(line)
 
     @override
     def _begin(self, item: str, /) -> None:
@@ -122,7 +120,10 @@ class _LogStage(Stage):
 
         with self.__lock:
             self.__started.setdefault(item, []).append(time.monotonic())
-            self.__reporter._write(f"{_count(self.__done, self.total)} {self.name}: {item}: started")
+            count = _count(self.__done, self.total)
+        # written out of the lock: lines of items worked on concurrently may come with their counts
+        # out of order
+        self.__reporter._write(f"{count} {self.name}: {item}: started")
 
     @override
     def _end(self, item: str, completed: bool, /) -> None:
@@ -134,11 +135,11 @@ class _LogStage(Stage):
             start = starts.pop()
             if not starts:
                 del self.__started[item]
-
-            # finer than a stage's: an item often takes a few milliseconds
-            took = f"{time.monotonic() - start:.3f}s"
-            outcome = f"done in {took}" if completed else f"failed after {took}"
-            self.__reporter._write(f"{_count(self.__done, self.total)} {self.name}: {item}: {outcome}")
+            count = _count(self.__done, self.total)
+        # finer than a stage's: an item often takes a few milliseconds
+        took = f"{time.monotonic() - start:.3f}s"
+        outcome = f"done in {took}" if completed else f"failed after {took}"
+        self.__reporter._write(f"{count} {self.name}: {item}: {outcome}")
 
     @override
     def _close(self, completed: bool, /) -> None:
@@ -153,4 +154,4 @@ class _LogStage(Stage):
                 line = f"{_count(done, None if total is None else done)} {self.name}: done in {_seconds(self.__start)}"
             else:
                 line = f"{_count(done, total)} {self.name}: failed after {_seconds(self.__start)}"
-            self.__reporter._write(line)
+        self.__reporter._write(line)
