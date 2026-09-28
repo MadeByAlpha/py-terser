@@ -153,19 +153,21 @@ multiple values, and can be repeated.
 Project mode reports its progress on stderr. On an interactive terminal, the top bar shows the whole run (every stage
 counted alike), the one below the current stage, and the line below them the modules being worked on. In CI (the `CI`
 environment variable is set), or wherever stderr is no interactive terminal (a log, a pipe, `TERM=dumb`), each stage
-is reported as plain lines instead: when it starts, at every tenth of its progress, and when it ends, with how long it
-took.
+is reported as plain lines instead: when it starts, every 100 modules (or passes over one) done, and when it ends,
+with how long it took.
 
 `--verbose` (or `TERSER_VERBOSE=1`, which `--verbose False` overrides) also reports every module as a stage starts
-and finishes working on it, with how long it took, always as plain lines: a slow module shows as a long duration, and a
-stuck one as a `started` line with no end.
+and finishes working on it, with how long it took and how far the stage is, always as plain lines: a slow module shows
+as a long duration, and a stuck one as a `started` line with no end.
 
 ```text
-Compiling modules: started (3 total)
-Compiling modules: pkg.util: started
-Compiling modules: pkg.util: done in 0.003s
-Compiling modules: 1/3 (33%) [0.0s]
+Compiling modules: started (250 total)
+Compiling modules: pkg.util: started [0/250 (0%)]
+Compiling modules: pkg.util: done in 0.003s [1/250 (0%)]
 ...
+Compiling modules: 100/250 (40%) [1.2s]
+...
+Compiling modules: done 250/250 in 3.1s
 ```
 
 ### Preserving names
@@ -272,8 +274,8 @@ Supported keys:
 - `config` table: every `TransformConfig` field (see [Python API](#python-api)). `remove_annotations` also takes a
   table of the four `remove_*_annotations` options.
 
-The hook shows its progress on stderr the same way as [the command line](#progress); `hatch build -q` (or
-`HATCH_QUIET=1`) turns it off, and `hatch build -v` (or `HATCH_VERBOSE=1`), like `TERSER_VERBOSE=1`, reports every
+The hook shows its progress on stderr the same way as [the command line](#progress); `hatch -q build` (or
+`HATCH_QUIET=1`) turns it off, and `hatch -v build` (or `HATCH_VERBOSE=1`), like `TERSER_VERBOSE=1`, reports every
 module. Progress bars need `tqdm` and `rich`; when the build environment lacks them, the hook lists the stages as they
 start on a terminal, after a warning.
 

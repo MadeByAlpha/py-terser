@@ -20,8 +20,9 @@ class Task:
         return self
 
     def __exit__(self, exc_ty: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None):
-        self.stage._end(self.name, exc is None)
+        # counted before it's reported as ended, so that the report counts it
         self.stage.advance()
+        self.stage._end(self.name, exc is None)
 
         if exc:
             import traceback

@@ -108,7 +108,7 @@ class TerserBuildHook(BuildHookInterface):
                 self._minify_wheel(artifact_path, reporter)
 
     def _reporter(self) -> Reporter:
-        # `hatch build -q` (or `HATCH_QUIET`) asks for less output
+        # `hatch -q build` (or `HATCH_QUIET`) asks for less output
         if self.app.verbosity < 0:
             return NullReporter()
 
@@ -116,7 +116,7 @@ class TerserBuildHook(BuildHookInterface):
         def warn(message: str) -> None:
             self.app.display_warning(f'terser: {message}; add "tqdm" and "rich" to `[build-system].requires` to see it')
 
-        # `hatch build -v` (or `HATCH_VERBOSE`) asks for more: every module, as it's worked on
+        # `hatch -v build` (or `HATCH_VERBOSE`) asks for more: every module, as it's worked on
         verbose = self.app.verbosity > 0 or env_flag(VERBOSE_ENV)
         return auto_reporter("terser: ", warn=warn, verbose=verbose)
 

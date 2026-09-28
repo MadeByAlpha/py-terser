@@ -282,8 +282,8 @@ def test_auto_reporter_verbose_reports_items(terminal, no_ci, monkeypatch, tqdm)
 
     assert isinstance(reporter, LogReporter)
     assert warnings == []
-    assert "tool: Counting: pkg.a: started\n" in terminal.getvalue()
-    assert "tool: Counting: pkg.a: done in " in terminal.getvalue()
+    assert "tool: Counting: pkg.a: started [0/1 (0%)]\n" in terminal.getvalue()
+    assert re.search(r"tool: Counting: pkg\.a: done in [0-9.]+s \[1/1 \(100%\)\]\n", terminal.getvalue())
 
 
 def test_auto_reporter_without_tqdm_in_ci(no_tqdm, monkeypatch):
@@ -325,9 +325,9 @@ def test_auto_reporter_warns_on_file_by_default(no_tqdm, no_ci, terminal):
     assert out.getvalue() == "tool: warning: tqdm or rich is not installed, so only the stages are shown, not their progress\n"
 
 
-def _verbose_lines(run):
+def _verbose_lines(run, **kwargs):
     out = io.StringIO()
-    reporter = LogReporter("tool: ", file=out, progress=True)
+    reporter = LogReporter("tool: ", file=out, progress=True, **kwargs)
     try:
         run(reporter)
     except RuntimeError:
@@ -336,17 +336,42 @@ def _verbose_lines(run):
     return [line.rsplit(" [", 1)[0].rsplit(" in ", 1)[0].rsplit(" after ", 1)[0] for line in out.getvalue().splitlines()]
 
 
-def test_log_reporter_progress_reports_every_tenth():
+def test_log_reporter_progress_reports_every_hundred():
     def run(reporter):
-        with reporter.stage("Counting", 20) as stage:
-            for _ in stage.iter(range(20)):
+        with reporter.stage("Counting", 250) as stage:
+            for _ in stage.iter(range(250)):
                 pass
 
     assert _verbose_lines(run) == [
-        "tool: Counting: started (20 total)",
-        *(f"tool: Counting: {n}/20 ({n * 5}%)" for n in range(2, 20, 2)),
-        "tool: Counting: done 20/20",
+        "tool: Counting: started (250 total)",
+        "tool: Counting: 100/250 (40%)",
+        "tool: Counting: 200/250 (80%)",
+        "tool: Counting: done 250/250",
     ]
+
+
+def test_log_reporter_progress_every_given_units():
+    def run(reporter):
+        with reporter.stage("Counting", 10) as stage:
+            # advancing past a multiple of `every` at once still reports it
+            stage.advance(3)
+            stage.advance(5)
+            stage.advance(2)
+
+    assert _verbose_lines(run, every=4) == [
+        "tool: Counting: started (10 total)",
+        "tool: Counting: 8/10 (80%)",
+        "tool: Counting: done 10/10",
+    ]
+
+
+def test_log_reporter_progress_ends_at_hundred():
+    def run(reporter):
+        with reporter.stage("Counting", 100) as stage:
+            stage.advance(100)
+
+    # the end is only reported once
+    assert _verbose_lines(run) == ["tool: Counting: started (100 total)", "tool: Counting: done 100/100"]
 
 
 def test_log_reporter_progress_stage_without_total():
@@ -386,28 +411,28 @@ def test_log_reporter_progress_is_thread_safe():
             thread.join()
 
     lines = out.getvalue().splitlines()
-    assert len(lines) == 1 + 9 + 1  # started, every tenth but the last, done
+    assert len(lines) == 1 + 79 + 1  # started, every hundred but the last, done
     assert lines[-1].startswith("Threads: done 8000/8000 in ")
 
 
 def test_log_reporter_items():
     out = io.StringIO()
     reporter = LogReporter("tool: ", file=out, items=True)
-    stage = reporter.stage("Compiling", 2)
+    stage = reporter.stage("Compiling", 3)
     with stage.item("pkg.a"), stage.item("pkg.b"):
         pass
     with pytest.raises(RuntimeError), stage.item("pkg.c"):
         raise ValueError
 
-    # durations vary: keep the lines up to them
-    assert [re.sub(r" [0-9.]+s$", "", line) for line in out.getvalue().splitlines()] == [
+    # durations vary: keep the lines up to them. An item that ended is counted as done
+    assert [re.sub(r" [0-9.]+s ", " ", line) for line in out.getvalue().splitlines()] == [
         "tool: Compiling",
-        "tool: Compiling: pkg.a: started",
-        "tool: Compiling: pkg.b: started",
-        "tool: Compiling: pkg.b: done in",
-        "tool: Compiling: pkg.a: done in",
-        "tool: Compiling: pkg.c: started",
-        "tool: Compiling: pkg.c: failed after",
+        "tool: Compiling: pkg.a: started [0/3 (0%)]",
+        "tool: Compiling: pkg.b: started [0/3 (0%)]",
+        "tool: Compiling: pkg.b: done in [1/3 (33%)]",
+        "tool: Compiling: pkg.a: done in [2/3 (66%)]",
+        "tool: Compiling: pkg.c: started [2/3 (66%)]",
+        "tool: Compiling: pkg.c: failed after [3/3 (100%)]",
     ]
 
 
