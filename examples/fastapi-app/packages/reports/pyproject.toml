@@ -1,0 +1,13 @@
+[project]
+name = "reports"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = ["fastapi>=0.118", "numpy>=2.3", "pydantic>=2.12", "pyyaml>=6.0.3", "terser-hints>=0.1"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+# rollup-py installs this member with uv: rebuild it when a source changes, not only its pyproject.toml
+cache-keys = [{ file = "pyproject.toml" }, { file = "src/**/*.py" }]

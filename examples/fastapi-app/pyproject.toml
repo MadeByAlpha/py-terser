@@ -1,0 +1,149 @@
+[project]
+name = "api"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "alpha93>=1.2.6",
+    "anyio>=4.11",
+    "cython>=3.1",
+    "fastapi>=0.118",
+    "httpx>=0.28",
+    "numpy>=2.3",
+    "playwright>=1.55",
+    "pydantic>=2.12",
+    "pyyaml>=6.0.3",
+    "reports",
+    "terser-hints>=0.1",
+    "vercel>=0.3",
+    "xattr>=1.3",
+]
+
+[dependency-groups]
+dev = ["hatch>=1.14", "uvicorn>=0.37"]
+
+[tool.uv.sources]
+reports = { workspace = true }
+py-terser = { path = "../../packages/terser" }
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+
+[build-system]
+requires = [
+    "hatchling",
+    "tqdm",
+    "rich",
+    "rollup-py @ git+https://github.com/MadeByAlpha/rollup-py.git",
+    "py-terser",
+]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/api"]
+
+[tool.hatch.build.targets.rollup]
+distribution-name = "api-bundled"
+conditional = "evaluate"
+# what the Vercel Python runtime (`vercel-runtime`) brings: itself, and the packages it vendors
+external = ["vercel-runtime", "uvicorn", "click", "colorama", "h11", "wsproto", "werkzeug", "markupsafe"]
+
+# `hatch build` installs `[build-system].requires` without `[tool.uv.sources]`: point it at this checkout
+[tool.hatch.envs.hatch-build]
+dependencies = ["py-terser @ {root:parent:parent:uri}/packages/terser"]
+
+[tool.hatch.build.targets.rollup.hooks.terser]
+workers = 32
+# mangling is off while the transforms are verified on their own
+hoist_literals = false
+rename_locals = false
+rename_star_args = false
+rename_globals = false
+rename_modules = false
+# tree-shaking: modules unreachable from these are dropped. Modules imported by a name only known
+# at run time are entries of their own, and keep their names (so do the packages they are in)
+entry = [
+    "api.main",
+    # `api.crons` imports each job by the name of its directory
+    "api.crons.0b5efbe1-4aa2-40c6-99b8-6fb048198330",
+    "api.crons.4d60eca5-465a-4f5d-8fb1-74c2c8c62c70",
+    "api.crons.cdb75f0c-cff8-4b29-bc40-86a81a89de26",
+    # `anyio._core._eventloop`: `import_module(f"anyio._backends._{name}")`
+    "anyio._backends._asyncio",
+    # uvicorn (outside the bundle) uses `websockets` when it can import it
+    "websockets",
+    "websockets.datastructures",
+    "websockets.exceptions",
+    "websockets.extensions.base",
+    "websockets.extensions.permessage_deflate",
+    "websockets.frames",
+    "websockets.http11",
+    "websockets.legacy.handshake",
+    "websockets.legacy.server",
+    "websockets.server",
+    "websockets.typing",
+]
+preserve_modules = [
+    # `api.crons` reports each job's module name
+    "api.crons",
+]
+# anyio's lazy importer reads `TYPE_CHECKING` back, and parses the imports under it
+preserve_type_checking = ["anyio", "anyio.abc"]
+
+[tool.hatch.build.targets.rollup.hooks.terser.preserve_locals]
+# pydantic reads `**extra` of `Field` back through `inspect.signature()`
+"pydantic.fields::Field" = ["**extra"]
+"pydantic.v1.fields::Field" = ["**extra"]
+
+[tool.hatch.build.targets.rollup.hooks.terser.preserve_globals]
+# uvicorn (and Vercel) load the app by name
+"api.main" = ["app"]
+# `api.crons` finds each job's `handler` by name, and `vercel.cron` reports it as `module:name`
+"api.crons.????????-????-????-????-????????????" = ["handler"]
+# anyio's lazy importer deletes these from its packages' globals by name (`del globals()[f.__name__]`)
+"anyio" = ["install_lazy_importer", "fix_package_names", "set_deprecated_aliases"]
+"anyio.abc" = ["install_lazy_importer", "fix_package_names", "set_deprecated_aliases"]
+"anyio._lazyimport" = ["install_lazy_importer", "fix_package_names", "set_deprecated_aliases"]
+
+[tool.hatch.build.targets.rollup.hooks.terser.config]
+passes = 5
+optimize = 2
+target_version = [3, 14]
+apply_contracts = true
+remove_literal_statements = true
+combine_imports = true
+remove_explicit_base = true
+remove_explicit_return_none = true
+fold_constants = true
+fold_type_checking = true
+remove_dead_code = true
+remove_debug = true
+remove_asserts = true
+convert_pass = true
+remove_empty_exc_brackets = true
+convert_posargs = true
+unfold_iife_lambdas = true
+remove_type_statements = true
+convert_early_exits = true
+convert_to_inline = true
+convert_to_lambda = true
+remove_dummy_assignments = true
+cleanup_local_imports = true
+respect_all = true
+remove_typing_decorators = true
+remove_overloads = true
+remove_generics = true
+remove_typing_classes = true
+convert_typing_constructors = true
+convert_typing_extensions = true
+convert_dynamic_attribute_access = true
+remove_dunder_all = true
+
+[tool.hatch.build.targets.rollup.hooks.terser.config.remove_annotations]
+remove_variable_annotations = true
+remove_return_annotations = true
+remove_argument_annotations = true
+remove_attribute_annotations = true
+
+[tool.hatch.build.targets.rollup.hooks.terser.config.remove_docstrings]
+also_modules = true
